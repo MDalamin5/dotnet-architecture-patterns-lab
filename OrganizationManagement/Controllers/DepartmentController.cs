@@ -8,6 +8,7 @@ using OrganizationManagement.Data;
 using OrganizationManagement.DTOs.Department;
 using OrganizationManagement.IRepository;
 using OrganizationManagement.Models;
+using OrganizationManagement.Repository.IRepository;
 
 namespace OrganizationManagement.Controllers
 {
@@ -15,13 +16,12 @@ namespace OrganizationManagement.Controllers
     [Route("/api/v1/departments")]
     public class DepartmentController: ControllerBase
     {
-        private readonly AppDbContext _appDbContext;
-        private readonly IDepartmentRepository _departmentRepository;
+        
+        private readonly IUnitOfWork _unitOfWork;
 
-        public DepartmentController(IDepartmentRepository departmentRepository, AppDbContext appDbContext)
+        public DepartmentController(IUnitOfWork unitOfWork )
         {
-            _appDbContext = appDbContext;
-            _departmentRepository = departmentRepository;
+            _unitOfWork = unitOfWork;
         }
 
         // Department Create Endpoint
@@ -36,7 +36,8 @@ namespace OrganizationManagement.Controllers
 
             try
             {
-                await _departmentRepository.CreateAsync(dbObj);
+                await _unitOfWork.Departments.CreateAsync(dbObj);
+                await _unitOfWork.SaveChangesAsync();
             }
             catch(Exception)
             {
@@ -49,7 +50,7 @@ namespace OrganizationManagement.Controllers
         [HttpGet]
         public async Task<IActionResult> getAllDepartments()
         {
-            var allDepartments = await _departmentRepository.GetAllAsync();
+            var allDepartments = await _unitOfWork.Departments.GetAllAsync();
             return Ok(allDepartments);
         }
 
@@ -57,7 +58,7 @@ namespace OrganizationManagement.Controllers
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> getDepartmentById(Guid id)
         {
-            var dbObj = await _departmentRepository.GetByIdAsync(id);
+            var dbObj = await _unitOfWork.Departments.GetByIdAsync(id);
             
             return Ok(dbObj);
         }
@@ -66,11 +67,12 @@ namespace OrganizationManagement.Controllers
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> updateDepartmentById(Guid id, [FromBody] DepartmentUpdateDto model)
         {
-            var dbObj = await _departmentRepository.GetByIdAsync(id);
+            var dbObj = await _unitOfWork.Departments.GetByIdAsync(id);
 
             dbObj.Name = model.Name;
 
-            await _departmentRepository.UpdateAsync(dbObj);
+            await _unitOfWork.Departments.UpdateAsync(dbObj);
+            await _unitOfWork.SaveChangesAsync();
             
 
             return Ok(dbObj);
@@ -81,8 +83,9 @@ namespace OrganizationManagement.Controllers
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> deleteDepartmentById(Guid id)
         {
-            var dbObj = await _departmentRepository.GetByIdAsync(id);
-            await _departmentRepository.DeleteAsync(dbObj);
+            var dbObj = await _unitOfWork.Departments.GetByIdAsync(id);
+            await _unitOfWork.Departments.DeleteAsync(dbObj);
+            await _unitOfWork.SaveChangesAsync();
             
 
             return Ok("Data deleted successfully.");

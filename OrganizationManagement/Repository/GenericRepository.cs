@@ -39,7 +39,7 @@ namespace OrganizationManagement.Repository
         {
             // var newObj = _mapper.Map<TEntity>(model);
             await _dbSet.AddAsync(model);
-            await _appDbContext.SaveChangesAsync();
+            // await _appDbContext.SaveChangesAsync();
 
             // _mapper.Map<TEntity>(model);
         }
@@ -47,14 +47,14 @@ namespace OrganizationManagement.Repository
         public async Task UpdateAsync(TEntity model)
         {
             _dbSet.Update(model);
-            await _appDbContext.SaveChangesAsync();
+            // await _appDbContext.SaveChangesAsync();
             
         }
 
         public async Task DeleteAsync(TEntity model)
         {
             _dbSet.Remove(model);
-            await _appDbContext.SaveChangesAsync();
+            // await _appDbContext.SaveChangesAsync();
         }
 
 

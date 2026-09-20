@@ -12,9 +12,10 @@ builder.Services.AddDbContext<AppDbContext>(options=>
 options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddControllers();
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-builder.Services.AddScoped<IDepartmentRepository, DepartmentRepository>();
-builder.Services.AddScoped<IDesignationRepository, DesignationRepository>();
+// builder.Services.AddScoped<IDepartmentRepository, DepartmentRepository>();
+// builder.Services.AddScoped<IDesignationRepository, DesignationRepository>();
 
 builder.Services.AddAutoMapper(cfg => cfg.AddMaps(typeof(Program)));
 
