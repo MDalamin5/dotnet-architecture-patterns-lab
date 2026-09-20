@@ -10,6 +10,6 @@ namespace OrganizationManagement.DTOs.Department
     {
         [Required(ErrorMessage = "Name is Required.")]
         [StringLength(20, MinimumLength =3)]
-        public string ?Name {get; set;}
+        public required string Name {get; set;}
     }
 }

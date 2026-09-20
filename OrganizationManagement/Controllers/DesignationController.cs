@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using OrganizationManagement.Data;
 using OrganizationManagement.Repository.IRepository;
 using OrganizationManagement.DTOs.Designation;
+using OrganizationManagement.Models;
 
 namespace OrganizationManagement.Controllers
 {
@@ -26,20 +27,31 @@ namespace OrganizationManagement.Controllers
         [HttpPost]
         public async Task<IActionResult> createCategories([FromBody] CreateDesignationDto model)
         {
-            var response = await _designationRepository.CreateDesignation(model);
-            if(response == true)
+            var dbObj = new Designation
             {
-                return Ok("Category created Successfully.");
+                Id = Guid.NewGuid(),
+                Name = model.Name
+            };
+           
+
+            try
+            {
+                await _designationRepository.CreateAsync(dbObj);
             }
-            else
-                return Ok("Category is not created.");
+            catch (Exception)
+            {
+                return Ok("Designation is not Created successfully.");
+                
+            }
+            return Ok("Designation Created Successfully.");
+
         }
 
         // Get All Department
         [HttpGet]
         public async Task<IActionResult> getAllDepartments()
         {
-            var allDepartments = await _designationRepository.getAllDesignation();
+            var allDepartments = await _designationRepository.GetAllAsync();
             return Ok(allDepartments);
         }
 
@@ -47,7 +59,7 @@ namespace OrganizationManagement.Controllers
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> getDepartmentById(Guid id)
         {
-            var dbObj = await _designationRepository.getDesignationById(id);
+            var dbObj = await _designationRepository.GetByIdAsync(id);
             
             return Ok(dbObj);
         }
@@ -56,7 +68,11 @@ namespace OrganizationManagement.Controllers
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> updateDepartmentById(Guid id, [FromBody] UpdateDesignationDto model)
         {
-            var dbObj = await _designationRepository.updateDesignationById(id, model);
+            var dbObj = await _designationRepository.GetByIdAsync(id);
+
+            dbObj.Name = model.Name;
+
+            await _designationRepository.UpdateAsync(dbObj);
             
 
             return Ok(dbObj);
@@ -67,7 +83,8 @@ namespace OrganizationManagement.Controllers
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> deleteDepartmentById(Guid id)
         {
-            var dbObj = await _designationRepository.deleteDesignationById(id);
+            var dbObj = await _designationRepository.GetByIdAsync(id);
+            await _designationRepository.DeleteAsync(dbObj);
             
 
             return Ok("Data deleted successfully.");
