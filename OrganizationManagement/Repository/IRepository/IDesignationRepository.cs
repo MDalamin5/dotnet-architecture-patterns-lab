@@ -9,10 +9,6 @@ namespace OrganizationManagement.Repository.IRepository
 {
     public interface IDesignationRepository: IGenericRepository<Designation>
     {
-        // Task<bool> CreateDesignation(CreateDesignationDto model);
-        // Task<List<ReadDesignationDto>> getAllDesignation();
-        // Task<ReadDesignationDto> getDesignationById(Guid id);
-        // Task<bool> updateDesignationById(Guid id, UpdateDesignationDto model);
-        // Task<bool> deleteDesignationById(Guid id);
+        
     }
 }
