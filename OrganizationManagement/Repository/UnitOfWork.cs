@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using AutoMapper;
+using Microsoft.EntityFrameworkCore.Storage;
 using OrganizationManagement.Data;
 using OrganizationManagement.Models;
 using OrganizationManagement.Repository.IRepository;
@@ -12,6 +13,7 @@ namespace OrganizationManagement.Repository
     public class UnitOfWork: IUnitOfWork
     {
         private readonly AppDbContext _appDbContext;
+        private IDbContextTransaction _transaction;
         private readonly IMapper _mapper;
 
         public IGenericRepository<Department> Departments {get;}
@@ -31,6 +33,57 @@ namespace OrganizationManagement.Repository
         {
             return await _appDbContext.SaveChangesAsync();
         }
+
+        public async Task BeginTransactionAsync()
+        {
+            _transaction = await _appDbContext.Database.BeginTransactionAsync();
+        }
+
+        public async Task CommitTransactionAsync()
+        {
+            if(_transaction == null)
+                throw new InvalidOperationException("No Active Transaction.");
+
+            try
+            {
+                await _appDbContext.SaveChangesAsync();
+                await _transaction.CommitAsync();
+            }
+            catch
+            {
+                await _transaction.RollbackAsync();
+                throw;
+            }
+            finally
+            {
+                await _transaction.DisposeAsync();
+                _transaction = null;
+            }
+        }
+
+        public async Task RollbackTransactionAsync()
+        {
+            if(_transaction == null)
+                return;
+
+            try
+            {
+                await _transaction.RollbackAsync();
+            }
+            finally
+            {
+                await _transaction.DisposeAsync();
+                _transaction = null;
+            }
+        }
+
+
+
+
+
+
+
+
 
         public void Dispose()
         {
