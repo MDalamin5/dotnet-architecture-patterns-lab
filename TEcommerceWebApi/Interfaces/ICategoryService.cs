@@ -9,12 +9,12 @@ using TEcommerceWebApi.Models;
 
 namespace TEcommerceWebApi.Interfaces
 {
-    public interface ICategoryService:IGenericRepository<Category>
+    public interface ICategoryService //:IGenericRepository<Category>
     {
-        // Task<PaginatedResult<CategoryReadDto>> GetAllCategory(QueryParameters queryParameter);
-        // Task<CategoryReadDto?> GetCategoryById(Guid categoryId);
-        // Task<CategoryReadDto> CreateCategory(CategoryCreateDto categoryData);
-        // Task<CategoryReadDto?> UpdateCategory(Guid categoryId, CategoryUpdateDto categoryData);
-        // Task<bool> DeleteCategoryById(Guid categoryId);
+        Task<PaginatedResult<CategoryReadDto>> GetAllCategory(QueryParameters queryParameter);
+        Task<CategoryReadDto?> GetCategoryById(Guid categoryId);
+        Task<CategoryReadDto> CreateCategory(CategoryCreateDto categoryData);
+        Task<CategoryReadDto?> UpdateCategory(Guid categoryId, CategoryUpdateDto categoryData);
+        Task<bool> DeleteCategoryById(Guid categoryId);
     }
 }
