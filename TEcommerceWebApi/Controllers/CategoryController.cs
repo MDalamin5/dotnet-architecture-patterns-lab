@@ -1,104 +1,107 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
-using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TEcommerceWebApi.data;
 using TEcommerceWebApi.DTOs;
 using TEcommerceWebApi.Helpers;
 using TEcommerceWebApi.Interfaces;
-using TEcommerceWebApi.Models;
 
 namespace TEcommerceWebApi.Controllers
 {
     [ApiController]
     [Route("/api/v2/categories")]
-    public class CategoryController: ControllerBase
+    public class CategoryController : ControllerBase
     {
-        public readonly ICategoryService _categoryService;
-        private readonly IMapper _mapper;
-        private readonly AppDbContext _appDbContext;
-        
-        public CategoryController(ICategoryService categoryService, IMapper mapper, AppDbContext appDbContext)
+        private readonly ICategoryService _categoryService;
+
+        // Injected only the Service interface
+        public CategoryController(ICategoryService categoryService)
         {
             _categoryService = categoryService;
-            _mapper = mapper;
-            _appDbContext = appDbContext;
         }
 
-
-        // Read all categories
+        // 1. Get All Categories (with Pagination, Search & Sort)
         [HttpGet]
-        public async Task<IActionResult> GetCategories([FromQuery] QueryParameters queryParameter)
+        public async Task<ActionResult<ApiResponse<PaginatedResult<CategoryReadDto>>>> GetCategories(
+            [FromQuery] QueryParameters queryParameters)
         {
-            queryParameter.Validate();
-            // Data Binding With Read Dto
-            var responseCategory = await _categoryService.GetAllAsync();
-
-            return Ok(responseCategory);
+            queryParameters.Validate();
+            var result = await _categoryService.GetAllCategory(queryParameters);
+            return Ok(ApiResponse<PaginatedResult<CategoryReadDto>>.SuccessResponse(
+                result, 
+                200, 
+                "Categories retrieved successfully."
+            ));
         }
 
-        //Read a category byId
-        
+        // 2. Get Category By ID
         [HttpGet("{categoryId:guid}")]
-        public async Task<IActionResult> GetCategoryById(Guid categoryId)
+        public async Task<ActionResult<ApiResponse<CategoryReadDto>>> GetCategoryById(Guid categoryId)
         {
-            
-            var responseCategory = await _categoryService.GetByIdAsync(categoryId);
+            var category = await _categoryService.GetCategoryById(categoryId);
 
-            if(responseCategory == null)
-                return NotFound(ApiResponse<object>.ErrorResponse(new List<string>{"Category not found with this id."}, 404, "Validation Invalid."));
+            if (category == null)
+            {
+                return NotFound(ApiResponse<object>.ErrorResponse(
+                    new List<string> { $"Category with ID '{categoryId}' was not found." }, 
+                    404, 
+                    "Category Not Found"
+                ));
+            }
 
-            return Ok(responseCategory);
+            return Ok(ApiResponse<CategoryReadDto>.SuccessResponse(category, 200, "Category found."));
         }
 
-        // Create Category
+        // 3. Create Category
         [HttpPost]
-        public async Task<IActionResult> CreateCategory([FromBody] CategoryCreateDto model)
+        public async Task<ActionResult<ApiResponse<CategoryReadDto>>> CreateCategory(
+            [FromBody] CategoryCreateDto categoryData)
         {
-            var dbObj = _mapper.Map<Category>(model);
-            dbObj.CategoryId = Guid.NewGuid();
-            dbObj.CreatedAt = DateTime.UtcNow;
+            var createdCategory = await _categoryService.CreateCategory(categoryData);
 
-            
-            //Return Data followed by CategoryReadDto
-            await _categoryService.CreateAsync(dbObj);
-
-            return Ok();
+            return CreatedAtAction(
+                nameof(GetCategoryById),
+                new { categoryId = createdCategory.CategoryId },
+                ApiResponse<CategoryReadDto>.SuccessResponse(createdCategory, 201, "Category created successfully.")
+            );
         }
 
-
-        // update a Category
-        [HttpPut("{id:guid}")]
-        public async Task<IActionResult> UpdateCategoryById(Guid id, [FromBody] CategoryUpdateDto model)
+        // 4. Update Category
+        [HttpPut("{categoryId:guid}")]
+        public async Task<ActionResult<ApiResponse<CategoryReadDto>>> UpdateCategoryById(
+            Guid categoryId, 
+            [FromBody] CategoryUpdateDto categoryData)
         {
-            //finding the category
+            var updatedCategory = await _categoryService.UpdateCategory(categoryId, categoryData);
 
-            var foundCategory = await _categoryService.GetByIdAsync(id);
+            if (updatedCategory == null)
+            {
+                return NotFound(ApiResponse<object>.ErrorResponse(
+                    new List<string> { $"Category with ID '{categoryId}' was not found." }, 
+                    404, 
+                    "Update Failed"
+                ));
+            }
 
-            _mapper.Map(model,foundCategory);
-
-            await _categoryService.UpdateAsync(foundCategory);
-
-            return Ok();
-            
+            return Ok(ApiResponse<CategoryReadDto>.SuccessResponse(updatedCategory, 200, "Category updated successfully."));
         }
 
-
-
-
-        // delete category by ID
-        [HttpDelete("{id:guid}")]
-        public async Task<IActionResult> DeleteCategoryById(Guid id)
+        // 5. Delete Category (Soft Delete)
+        [HttpDelete("{categoryId:guid}")]
+        public async Task<ActionResult<ApiResponse<object>>> DeleteCategoryById(Guid categoryId)
         {
-            var dbObj = await _categoryService.GetByIdAsync(id);
+            var deleted = await _categoryService.DeleteCategoryById(categoryId);
 
-            await _categoryService.DeleteAsync(dbObj);
-            
-            return Ok();
+            if (!deleted)
+            {
+                return NotFound(ApiResponse<object>.ErrorResponse(
+                    new List<string> { $"Category with ID '{categoryId}' was not found." }, 
+                    404, 
+                    "Delete Failed"
+                ));
+            }
+
+            return Ok(ApiResponse<object>.SuccessResponse(null, 200, "Category deleted successfully."));
         }
-    
     }
 }
