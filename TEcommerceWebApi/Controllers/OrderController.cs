@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TEcommerceWebApi.DTOs;
 using TEcommerceWebApi.Enums;
@@ -22,6 +23,7 @@ namespace TEcommerceWebApi.Controllers
 
         // 1. Checkout (Create Order with atomic transaction)
         [HttpPost("checkout")]
+        [Authorize]
         public async Task<ActionResult<ApiResponse<OrderReadDto>>> Checkout([FromBody] OrderCheckoutDto checkoutData)
         {
             try

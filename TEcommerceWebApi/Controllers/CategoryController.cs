@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TEcommerceWebApi.DTOs;
 using TEcommerceWebApi.Helpers;
@@ -54,6 +55,7 @@ namespace TEcommerceWebApi.Controllers
 
         // 3. Create Category
         [HttpPost]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<ApiResponse<CategoryReadDto>>> CreateCategory(
             [FromBody] CategoryCreateDto categoryData)
         {
@@ -88,6 +90,7 @@ namespace TEcommerceWebApi.Controllers
 
         // 5. Delete Category (Soft Delete)
         [HttpDelete("{categoryId:guid}")]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<ApiResponse<object>>> DeleteCategoryById(Guid categoryId)
         {
             var deleted = await _categoryService.DeleteCategoryById(categoryId);
