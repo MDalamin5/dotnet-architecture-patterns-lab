@@ -45,8 +45,11 @@ namespace TEcommerceWebApi.data
                 entity.HasKey(u => u.UserId);
                 entity.Property(u => u.Email).IsRequired().HasMaxLength(200);
                 entity.Property(u => u.FullName).IsRequired().HasMaxLength(100);
+                entity.Property(u => u.PasswordHash).IsRequired();
+                
+                // Store Enum as string (e.g. "Admin", "Customer")
+                entity.Property(u => u.Role).HasConversion<string>();
 
-                // Unique constraint on Email in PostgreSQL
                 entity.HasIndex(u => u.Email).IsUnique();
             });
 
