@@ -1,0 +1,2 @@
+- 1st we'll explore the Vanilla `RBAC` Role Based Auth Control
+- 2nd we'll explore the Industry-Practice Permission Based Auth Control.
