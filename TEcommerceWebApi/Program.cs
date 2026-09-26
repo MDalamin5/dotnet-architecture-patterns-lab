@@ -1,46 +1,96 @@
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi; // ✅ Updated for .NET 10
 using TEcommerceWebApi.Controllers;
 using TEcommerceWebApi.data;
 using TEcommerceWebApi.Interfaces;
+using TEcommerceWebApi.Middlewares;
 using TEcommerceWebApi.Services;
+
 var builder = WebApplication.CreateBuilder(args);
+
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-//controller services registrations
+
+// 1. Configure Swagger with JWT Bearer Padlock 🔒
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Enter your JWT token directly in the box below."
+    });
+
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+    });
+});
+
 builder.Services.AddControllers();
-// add the repository Pattern Services and Map the Interfaces with the Services file.
+
+// 2. Register Application Services
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IProductService, ProductService>();
-builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
-
-builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
-builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IUserService, UserService>();
-// add auto-mapper
+builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+
 builder.Services.AddAutoMapper(typeof(Program));
 
-//Centralized api responses
+// 3. Centralized API Responses
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
     options.InvalidModelStateResponseFactory = context =>
     {
-        var errors = context.ModelState.Where(e => e.Value != null && e.Value.Errors.Count>0).
-        SelectMany(e=>e.Value?.Errors != null ? e.Value.Errors.Select(x=>x.ErrorMessage): new List<string>()).ToList();
+        var errors = context.ModelState.Where(e => e.Value != null && e.Value.Errors.Count > 0)
+            .SelectMany(e => e.Value?.Errors != null ? e.Value.Errors.Select(x => x.ErrorMessage) : new List<string>()).ToList();
 
-        return  new BadRequestObjectResult(ApiResponse<object>.ErrorResponse(errors, 400, "Validations failed."));
+        return new BadRequestObjectResult(ApiResponse<object>.ErrorResponse(errors, 400, "Validation failed."));
     };
 });
 
-builder.Services.AddDbContext<AppDbContext>(options=> 
+// 4. Database Context
+builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-var app = builder.Build();
-// 🛡️ Global Exception Handler
-app.UseMiddleware<TEcommerceWebApi.Middlewares.GlobalExceptionMiddleware>();
+// 5. 🛡️ CONFIGURE JWT AUTHENTICATION & AUTHORIZATION
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+var secretKey = jwtSettings["SecretKey"]!;
 
-// 2. Performance Logger (wraps everything below it)
-app.UseMiddleware<TEcommerceWebApi.Middlewares.PerformanceMiddleware>();
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
+        ClockSkew = TimeSpan.Zero
+    };
+});
+
+builder.Services.AddAuthorization();
+
+var app = builder.Build();
+
+// 6. Middlewares Pipeline
+app.UseMiddleware<GlobalExceptionMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
@@ -50,20 +100,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-
-
-// Build the API
-app.MapGet("/", () => {
-    // return a json object
-    var response = new
-    {
-        message = "Welcome to Our site",
-        status = "ok"
-    };
-   return  Results.Ok(response);
-});
-
+// ⚠️ Authentication MUST come before Authorization
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 app.Run();
-
