@@ -16,29 +16,39 @@ namespace TEcommerceWebApi.Services
     public class OrderService : IOrderService
     {
         private readonly AppDbContext _appDbContext;
+        private readonly ICurrentUserService _currentUserService;
 
-        public OrderService(AppDbContext appDbContext)
+        public OrderService(AppDbContext appDbContext, ICurrentUserService currentUserService)
         {
             _appDbContext = appDbContext;
+            _currentUserService = currentUserService;
         }
 
+        // 1. Checkout (Transactional, Stock Deducting, Secure Current User)
         public async Task<OrderReadDto> CheckoutAsync(OrderCheckoutDto checkoutData)
         {
-            // 1. Verify User Exists
-            var user = await _appDbContext.Users.FindAsync(checkoutData.UserId);
-            if (user == null)
+            // Read UserId directly from JWT token
+            var currentUserId = _currentUserService.UserId;
+
+            if (!currentUserId.HasValue)
             {
-                throw new KeyNotFoundException($"User with ID '{checkoutData.UserId}' does not exist.");
+                throw new UnauthorizedAccessException("User is not authenticated.");
             }
 
-            // 2. Fetch all requested products from DB in ONE single query (efficient batch lookup)
+            var user = await _appDbContext.Users.FindAsync(currentUserId.Value);
+            if (user == null)
+            {
+                throw new KeyNotFoundException("Authenticated user was not found in the database.");
+            }
+
+            // Batch fetch all requested products in one SQL query
             var productIds = checkoutData.Items.Select(i => i.ProductId).Distinct().ToList();
             var products = await _appDbContext.Products
                 .Include(p => p.Category)
                 .Where(p => productIds.Contains(p.ProductId))
                 .ToListAsync();
 
-            // 3. START ATOMIC DATABASE TRANSACTION ⚡
+            // Begin Atomic Database Transaction
             using var transaction = await _appDbContext.Database.BeginTransactionAsync();
 
             try
@@ -55,7 +65,7 @@ namespace TEcommerceWebApi.Services
                         throw new KeyNotFoundException($"Product with ID '{itemDto.ProductId}' was not found.");
                     }
 
-                    // Check Stock Availability
+                    // Check stock availability
                     if (product.StockQuantity < itemDto.Quantity)
                     {
                         throw new InvalidOperationException(
@@ -63,14 +73,14 @@ namespace TEcommerceWebApi.Services
                         );
                     }
 
-                    // Deduct Stock
+                    // Deduct stock
                     product.StockQuantity -= itemDto.Quantity;
 
-                    // Calculate Subtotal with verified DB Price
+                    // Calculate item total based on current database price
                     var itemTotal = product.Price * itemDto.Quantity;
                     totalAmount += itemTotal;
 
-                    // Create Line Item
+                    // Create line item record
                     orderItems.Add(new OrderItem
                     {
                         OrderItemId = Guid.NewGuid(),
@@ -81,7 +91,7 @@ namespace TEcommerceWebApi.Services
                     });
                 }
 
-                // 4. Create Parent Order Entity
+                // Create parent Order entity
                 var order = new Order
                 {
                     OrderId = newOrderId,
@@ -92,25 +102,24 @@ namespace TEcommerceWebApi.Services
                     OrderItems = orderItems
                 };
 
-                // 5. Add Order to context (EF Core change tracker will save Order, OrderItems, and update Product stocks!)
                 await _appDbContext.Orders.AddAsync(order);
                 await _appDbContext.SaveChangesAsync();
 
-                // 6. COMMIT TRANSACTION TO POSTGRESQL 🚀
+                // Commit transaction to database
                 await transaction.CommitAsync();
 
-                // 7. Return complete OrderReadDto
                 return await GetOrderByIdAsync(newOrderId) 
                     ?? throw new Exception("Error loading created order.");
             }
             catch
             {
-                // If anything fails above, ROLLBACK all changes!
+                // Rollback if any step fails
                 await transaction.RollbackAsync();
                 throw;
             }
         }
 
+        // 2. Get Single Order by Order ID
         public async Task<OrderReadDto?> GetOrderByIdAsync(Guid orderId)
         {
             return await _appDbContext.Orders
@@ -129,7 +138,9 @@ namespace TEcommerceWebApi.Services
                         OrderItemId = oi.OrderItemId,
                         ProductId = oi.ProductId,
                         ProductName = oi.Product != null ? oi.Product.Name : string.Empty,
-                        CategoryName = oi.Product != null && oi.Product.Category != null ? oi.Product.Category.Name : string.Empty,
+                        CategoryName = oi.Product != null && oi.Product.Category != null 
+                                       ? oi.Product.Category.Name 
+                                       : string.Empty,
                         Quantity = oi.Quantity,
                         UnitPrice = oi.UnitPrice
                     }).ToList()
@@ -137,6 +148,19 @@ namespace TEcommerceWebApi.Services
                 .FirstOrDefaultAsync();
         }
 
+        // 3. Customer views their own orders (Derived from JWT claims)
+        public async Task<List<OrderReadDto>> GetMyOrdersAsync(OrderStatus? status = null)
+        {
+            var currentUserId = _currentUserService.UserId;
+            if (!currentUserId.HasValue)
+            {
+                throw new UnauthorizedAccessException("User is not authenticated.");
+            }
+
+            return await GetOrdersByUserIdAsync(currentUserId.Value, status) ?? new List<OrderReadDto>();
+        }
+
+        // 4. Get Orders for any specific user ID
         public async Task<List<OrderReadDto>?> GetOrdersByUserIdAsync(Guid userId, OrderStatus? status = null)
         {
             var userExists = await _appDbContext.Users.AnyAsync(u => u.UserId == userId);
@@ -166,7 +190,9 @@ namespace TEcommerceWebApi.Services
                         OrderItemId = oi.OrderItemId,
                         ProductId = oi.ProductId,
                         ProductName = oi.Product != null ? oi.Product.Name : string.Empty,
-                        CategoryName = oi.Product != null && oi.Product.Category != null ? oi.Product.Category.Name : string.Empty,
+                        CategoryName = oi.Product != null && oi.Product.Category != null 
+                                       ? oi.Product.Category.Name 
+                                       : string.Empty,
                         Quantity = oi.Quantity,
                         UnitPrice = oi.UnitPrice
                     }).ToList()
@@ -174,7 +200,10 @@ namespace TEcommerceWebApi.Services
                 .ToListAsync();
         }
 
-        public async Task<PaginatedResult<OrderReadDto>> GetAllOrdersAsync(QueryParameters queryParameters, OrderStatus? status = null)
+        // 5. Admin Paginated Orders List
+        public async Task<PaginatedResult<OrderReadDto>> GetAllOrdersAsync(
+            QueryParameters queryParameters, 
+            OrderStatus? status = null)
         {
             var query = _appDbContext.Orders
                 .AsNoTracking()
@@ -205,7 +234,9 @@ namespace TEcommerceWebApi.Services
                         OrderItemId = oi.OrderItemId,
                         ProductId = oi.ProductId,
                         ProductName = oi.Product != null ? oi.Product.Name : string.Empty,
-                        CategoryName = oi.Product != null && oi.Product.Category != null ? oi.Product.Category.Name : string.Empty,
+                        CategoryName = oi.Product != null && oi.Product.Category != null 
+                                       ? oi.Product.Category.Name 
+                                       : string.Empty,
                         Quantity = oi.Quantity,
                         UnitPrice = oi.UnitPrice
                     }).ToList()
@@ -221,6 +252,7 @@ namespace TEcommerceWebApi.Services
             };
         }
 
+        // 6. Update Order Status
         public async Task<OrderReadDto?> UpdateOrderStatusAsync(Guid orderId, OrderStatus newStatus)
         {
             var order = await _appDbContext.Orders.FindAsync(orderId);
