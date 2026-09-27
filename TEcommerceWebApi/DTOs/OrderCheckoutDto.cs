@@ -7,13 +7,13 @@ namespace TEcommerceWebApi.DTOs
 {
     public class OrderCheckoutDto
     {
-        [Required(ErrorMessage = "UserId is required.")]
-        public Guid UserId { get; set; }
+        // ❌ Removed 'public Guid UserId { get; set; }' (Extracted automatically from Token!)
 
         [Required]
         [MinLength(1, ErrorMessage = "An order must have at least 1 item.")]
         public List<OrderItemCheckoutDto> Items { get; set; } = new List<OrderItemCheckoutDto>();
     }
+    
 
     public class OrderItemCheckoutDto
     {
