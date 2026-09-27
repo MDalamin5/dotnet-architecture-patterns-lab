@@ -21,7 +21,7 @@ namespace TEcommerceWebApi.Controllers
             _orderService = orderService;
         }
 
-        // 1. Checkout (Create Order with atomic transaction)
+        // 1. Checkout (Any Logged-in Customer/Admin)
         [HttpPost("checkout")]
         [Authorize]
         public async Task<ActionResult<ApiResponse<OrderReadDto>>> Checkout([FromBody] OrderCheckoutDto checkoutData)
@@ -35,6 +35,10 @@ namespace TEcommerceWebApi.Controllers
                     ApiResponse<OrderReadDto>.SuccessResponse(order, 201, "Order placed successfully.")
                 );
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(ApiResponse<object>.ErrorResponse(new List<string> { ex.Message }, 401, "Authentication Required"));
+            }
             catch (KeyNotFoundException ex)
             {
                 return NotFound(ApiResponse<object>.ErrorResponse(new List<string> { ex.Message }, 404, "Validation Failed"));
@@ -45,8 +49,25 @@ namespace TEcommerceWebApi.Controllers
             }
         }
 
-        // 2. Get Single Order Invoice by ID
+        // 2. Customer views their own order history
+        [HttpGet("my-orders")]
+        [Authorize]
+        public async Task<ActionResult<ApiResponse<List<OrderReadDto>>>> GetMyOrders([FromQuery] OrderStatus? status)
+        {
+            try
+            {
+                var orders = await _orderService.GetMyOrdersAsync(status);
+                return Ok(ApiResponse<List<OrderReadDto>>.SuccessResponse(orders, 200, "Your order history retrieved."));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(ApiResponse<object>.ErrorResponse(new List<string> { ex.Message }, 401, "Authentication Required"));
+            }
+        }
+
+        // 3. Get single order invoice by Order ID
         [HttpGet("{orderId:guid}")]
+        [Authorize]
         public async Task<ActionResult<ApiResponse<OrderReadDto>>> GetOrderById(Guid orderId)
         {
             var order = await _orderService.GetOrderByIdAsync(orderId);
@@ -62,8 +83,9 @@ namespace TEcommerceWebApi.Controllers
             return Ok(ApiResponse<OrderReadDto>.SuccessResponse(order, 200, "Order retrieved successfully."));
         }
 
-        // 3. Get User Orders
+        // 4. Admin views ANY specific user's orders
         [HttpGet("user/{userId:guid}")]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<ApiResponse<List<OrderReadDto>>>> GetUserOrders(
             Guid userId, 
             [FromQuery] OrderStatus? status)
@@ -81,8 +103,9 @@ namespace TEcommerceWebApi.Controllers
             return Ok(ApiResponse<List<OrderReadDto>>.SuccessResponse(orders, 200, "User orders retrieved."));
         }
 
-        // 4. Admin Get All Orders (Paginated + Status filter)
+        // 5. Admin lists all orders with pagination & status filter
         [HttpGet]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<ApiResponse<PaginatedResult<OrderReadDto>>>> GetAllOrders(
             [FromQuery] QueryParameters queryParameters,
             [FromQuery] OrderStatus? status)
@@ -92,8 +115,9 @@ namespace TEcommerceWebApi.Controllers
             return Ok(ApiResponse<PaginatedResult<OrderReadDto>>.SuccessResponse(result, 200, "All orders retrieved."));
         }
 
-        // 5. Update Order Status
+        // 6. Admin updates order status (e.g. Processing -> Completed)
         [HttpPatch("{orderId:guid}/status")]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<ApiResponse<OrderReadDto>>> UpdateOrderStatus(
             Guid orderId, 
             [FromBody] OrderStatusUpdateDto statusDto)
