@@ -61,6 +61,12 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// Add HttpContextAccessor
+builder.Services.AddHttpContextAccessor();
+
+// Register CurrentUserService
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+
 // 5. 🛡️ CONFIGURE JWT AUTHENTICATION & AUTHORIZATION
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
 var secretKey = jwtSettings["SecretKey"]!;
