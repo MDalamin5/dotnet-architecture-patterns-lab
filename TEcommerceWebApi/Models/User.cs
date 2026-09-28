@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using TEcommerceWebApi.Enums;
 
 namespace TEcommerceWebApi.Models
 {
@@ -9,12 +8,11 @@ namespace TEcommerceWebApi.Models
         public Guid UserId { get; set; }
         public string Email { get; set; } = string.Empty;
         public string FullName { get; set; } = string.Empty;
-
-        // 🔒 Store the one-way hashed password (never plain text!)
         public string PasswordHash { get; set; } = string.Empty;
 
-        // 🛡️ The User's Role for RBAC
-        public UserRole Role { get; set; } = UserRole.Customer;
+        // 🛡️ Foreign Key to Role Table
+        public Guid RoleId { get; set; }
+        public Role? Role { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
