@@ -2,130 +2,116 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using TEcommerceWebApi.DTOs;
-using TEcommerceWebApi.Models;
-using TEcommerceWebApi.Interfaces;
-using TEcommerceWebApi.Profiles;
 using AutoMapper;
-using TEcommerceWebApi.data;
 using Microsoft.EntityFrameworkCore;
-using TEcommerceWebApi.Controllers;
-using TEcommerceWebApi.Enums;
+using TEcommerceWebApi.data;
+using TEcommerceWebApi.DTOs;
 using TEcommerceWebApi.Helpers;
+using TEcommerceWebApi.Interfaces;
+using TEcommerceWebApi.Models;
+using TEcommerceWebApi.Controllers;
 
 namespace TEcommerceWebApi.Services
 {
-    public class CategoryService: ICategoryService  //: GenericRepository<Category>,ICategoryService
+    public class CategoryService : ICategoryService
     {
-
         private readonly AppDbContext _appDbContext;
         private readonly IMapper _mapper;
+        private readonly ICacheService _cacheService;
 
-        public CategoryService(AppDbContext appDbContext,IMapper mapper) //:base(appDbContext,mapper)
+        public CategoryService(AppDbContext appDbContext, IMapper mapper, ICacheService cacheService)
         {
             _appDbContext = appDbContext;
             _mapper = mapper;
+            _cacheService = cacheService;
         }
 
-        // private static readonly List<Category> _categories = new List<Category>();
+        // =========================================================================
+        // 1. GET SINGLE CATEGORY BY ID (Single Entity Caching)
+        // =========================================================================
+        public async Task<CategoryReadDto?> GetCategoryById(Guid categoryId)
+        {
+            // Step 1: Create a distinct key for this specific category
+            var cacheKey = $"category_{categoryId}";
+
+            // Step 2: Check Redis RAM first
+            var cachedCategory = await _cacheService.GetAsync<CategoryReadDto>(cacheKey);
+            if (cachedCategory != null)
+            {
+                return cachedCategory; // ⚡ Cache Hit: Return in ~1ms with 0 database queries!
+            }
+
+            // Step 3: Cache Miss -> Query PostgreSQL
+            var category = await _appDbContext.Categories
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CategoryId == categoryId);
+
+            if (category == null) return null;
+
+            var resultDto = _mapper.Map<CategoryReadDto>(category);
+
+            // Step 4: Save copy to Redis RAM for 10 minutes
+            await _cacheService.SetAsync(cacheKey, resultDto, TimeSpan.FromMinutes(10));
+
+            return resultDto;
+        }
+
+        // =========================================================================
+        // 2. GET ALL CATEGORIES (Paginated List & Search Caching)
+        // =========================================================================
         public async Task<PaginatedResult<CategoryReadDto>> GetAllCategory(QueryParameters queryParameter)
         {
-            IQueryable<Category> ?query = _appDbContext.Categories;
-            
-            
+            // Step 1: Build a dynamic key representing the exact page, size, search, and sort parameters
+            var cacheKey = $"categories_list_p{queryParameter.PageNumber}_s{queryParameter.PageSize}_{queryParameter.SearchValue}_{queryParameter.SortOrder}";
 
-            // Searching Performing
+            // Step 2: Check Redis RAM first
+            var cachedList = await _cacheService.GetAsync<PaginatedResult<CategoryReadDto>>(cacheKey);
+            if (cachedList != null)
+            {
+                return cachedList; // ⚡ Cache Hit: Return instantly
+            }
+
+            // Step 3: Cache Miss -> Build and execute PostgreSQL query
+            var query = _appDbContext.Categories
+                .AsNoTracking()
+                .AsQueryable();
+
+            // Search filter
             if (!string.IsNullOrWhiteSpace(queryParameter.SearchValue))
             {
                 var formattedSearch = $"%{queryParameter.SearchValue.Trim()}%";
-
-                query = query.Where(c => EF.Functions.ILike(c.Name, formattedSearch) || EF.Functions.ILike(c.Description, formattedSearch));
+                query = query.Where(c => EF.Functions.ILike(c.Name, formattedSearch) || 
+                                         (c.Description != null && EF.Functions.ILike(c.Description, formattedSearch)));
             }
 
-            //Sorting
-            if (!string.IsNullOrWhiteSpace(queryParameter.SortOrder))
-            {
-                var formattedSortOrder = queryParameter.SortOrder.Trim().ToLower();
-                if(Enum.TryParse<SortOrder>(formattedSortOrder, true, out var parsedSortOrder))
-                
-                switch (parsedSortOrder)
-                {
-                    case SortOrder.NameAsc:
-                        query = query.OrderBy(c => c.Name);
-                        break;
-                    
-                    case SortOrder.NameDesc:
-                        query = query.OrderByDescending(c => c.Name);
-                        break;
-                    case SortOrder.CreatedAtAsc:
-                        query = query.OrderBy(c => c.CreatedAt);
-                        break;
-                    case SortOrder.CreatedAtDesc:
-                        query = query.OrderByDescending(c => c.CreatedAt);
-                        break;
-                    
-                    default:
-                        query = query.OrderBy(c => c.Name);
-                        break;
-                }
-            }
-            else
-                query = query.OrderByDescending(c => c.Name);
+            // Default sorting
+            query = query.OrderByDescending(c => c.CreatedAt);
 
             var totalCategory = await query.CountAsync();
-            var Items = await query.Skip((queryParameter.PageNumber - 1)*queryParameter.PageSize).Take(queryParameter.PageSize).ToListAsync();
-            
+            var items = await query
+                .Skip((queryParameter.PageNumber - 1) * queryParameter.PageSize)
+                .Take(queryParameter.PageSize)
+                .ToListAsync();
 
-            var result = _mapper.Map<List<CategoryReadDto>>(Items);
-
-            // using without mapper.
-            /*
-            return categories.Select(c => new CategoryReadDto
+            var paginatedResult = new PaginatedResult<CategoryReadDto>
             {
-                CategoryId = c.CategoryId,
-                Name = c.Name,
-                Description = c.Description,
-                CreatedAt = c.CreatedAt
-            }).ToList();
-            */
-            return new PaginatedResult<CategoryReadDto>
-            {
-                Items = result,
+                Items = _mapper.Map<List<CategoryReadDto>>(items),
                 TotalCount = totalCategory,
                 PageNumber = queryParameter.PageNumber,
                 PageSize = queryParameter.PageSize
             };
 
+            // Step 4: Save paginated result in Redis RAM for 5 minutes
+            await _cacheService.SetAsync(cacheKey, paginatedResult, TimeSpan.FromMinutes(5));
+
+            return paginatedResult;
         }
 
-        public async Task<CategoryReadDto?> GetCategoryById(Guid categoryId)
-        {
-            var foundCategory = await _appDbContext.Categories.FirstOrDefaultAsync(category => category.CategoryId == categoryId);
-            if(foundCategory == null)
-                return null;
-
-            return _mapper.Map<CategoryReadDto>(foundCategory);
-
-            // without using the Mapper.
-            // return new CategoryReadDto
-            //     {
-            //         CategoryId = foundCategory.CategoryId,
-            //         Name = foundCategory.Name,
-            //         Description = foundCategory.Description,
-            //         CreatedAt = foundCategory.CreatedAt
-            //     };
-        }
-
+        // =========================================================================
+        // 3. CREATE CATEGORY (Cache Invalidation)
+        // =========================================================================
         public async Task<CategoryReadDto> CreateCategory(CategoryCreateDto categoryData)
         {
-            // var newCategory = new Category
-            // {
-            //     CategoryId = Guid.NewGuid(),
-            //     Name = categoryData.Name,
-            //     Description = categoryData.Description,
-            //     CreatedAt = DateTime.UtcNow
-            // };
-
             var newCategory = _mapper.Map<Category>(categoryData);
             newCategory.CategoryId = Guid.NewGuid();
             newCategory.CreatedAt = DateTime.UtcNow;
@@ -133,50 +119,47 @@ namespace TEcommerceWebApi.Services
             await _appDbContext.Categories.AddAsync(newCategory);
             await _appDbContext.SaveChangesAsync();
 
-            //return via mapper
+            // 🗑️ Invalidate ALL cached category lists (Page 1, Page 2, searches)
+            // The next time any customer browses categories, fresh data will be fetched from DB.
+            await _cacheService.RemoveByPrefixAsync("categories_list_");
+
             return _mapper.Map<CategoryReadDto>(newCategory);
-
-            //Return Data followed by CategoryReadDto
-            // return new CategoryReadDto
-            // {
-            //     CategoryId = newCategory.CategoryId,
-            //     Name = newCategory.Name,
-            //     Description = newCategory.Description,
-            //     CreatedAt = newCategory.CreatedAt
-            // };
-
         }
 
-
+        // =========================================================================
+        // 4. UPDATE CATEGORY (Granular Cache Invalidation)
+        // =========================================================================
         public async Task<CategoryReadDto?> UpdateCategory(Guid categoryId, CategoryUpdateDto categoryData)
         {
-            var foundCategory = await _appDbContext.Categories.FirstOrDefaultAsync(category => category.CategoryId == categoryId);
+            var foundCategory = await _appDbContext.Categories.FindAsync(categoryId);
+            if (foundCategory == null) return null;
 
-            if(foundCategory == null)
-                return null;
-            
-            
-            //Assuming the Name is not empty and the descriptions must gater then 10 char.
-            // foundCategory.Name = categoryData.Name;
-            // foundCategory.Description = categoryData.Description;
-
-            //using mapper categoryUpdateDto -> category
             _mapper.Map(categoryData, foundCategory);
-            _appDbContext.Categories.Update(foundCategory);
             await _appDbContext.SaveChangesAsync();
 
-            
+            // 🗑️ Invalidate this specific item AND all category lists
+            await _cacheService.RemoveAsync($"category_{categoryId}");
+            await _cacheService.RemoveByPrefixAsync("categories_list_");
+
             return _mapper.Map<CategoryReadDto>(foundCategory);
         }
 
+        // =========================================================================
+        // 5. DELETE CATEGORY (Granular Cache Invalidation)
+        // =========================================================================
         public async Task<bool> DeleteCategoryById(Guid categoryId)
         {
-            var category = await _appDbContext.Categories.FindAsync(categoryId);
-            if (category == null) return false;
+            var foundCategory = await _appDbContext.Categories.FindAsync(categoryId);
+            if (foundCategory == null) return false;
 
-            // ⚡ Soft Delete
-            category.IsDeleted = true;
+            // Soft Delete in PostgreSQL
+            foundCategory.IsDeleted = true;
             await _appDbContext.SaveChangesAsync();
+
+            // 🗑️ Invalidate this specific item AND all category lists
+            await _cacheService.RemoveAsync($"category_{categoryId}");
+            await _cacheService.RemoveByPrefixAsync("categories_list_");
+
             return true;
         }
     }

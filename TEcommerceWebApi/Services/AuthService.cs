@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
@@ -9,7 +10,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using TEcommerceWebApi.data;
 using TEcommerceWebApi.DTOs;
-using TEcommerceWebApi.Enums;
 using TEcommerceWebApi.Interfaces;
 using TEcommerceWebApi.Models;
 
@@ -28,48 +28,61 @@ namespace TEcommerceWebApi.Services
 
         public async Task<AuthResponseDto?> RegisterAsync(AuthRegisterDto registerData)
         {
-            // 1. Check if email already exists
             var emailExists = await _appDbContext.Users.AnyAsync(u => u.Email.ToLower() == registerData.Email.ToLower());
             if (emailExists) return null;
 
-            // 2. Hash Password using BCrypt
+            // Fetch the Role Entity matching the Enum or default to "Customer"
+            var roleName = registerData.Role.ToString();
+            var role = await _appDbContext.Roles
+                .Include(r => r.RolePermissions)
+                    .ThenInclude(rp => rp.Permission)
+                .FirstOrDefaultAsync(r => r.Name.ToLower() == roleName.ToLower());
+
+            if (role == null)
+            {
+                role = await _appDbContext.Roles
+                    .Include(r => r.RolePermissions)
+                        .ThenInclude(rp => rp.Permission)
+                    .FirstOrDefaultAsync(r => r.Name == "Customer");
+
+                if (role == null) throw new InvalidOperationException("Default 'Customer' role not found in database.");
+            }
+
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(registerData.Password);
 
-            // 3. Create User Entity
             var user = new User
             {
                 UserId = Guid.NewGuid(),
                 Email = registerData.Email.Trim().ToLower(),
                 FullName = registerData.FullName.Trim(),
                 PasswordHash = passwordHash,
-                Role = registerData.Role,
+                RoleId = role.RoleId,
+                Role = role,
                 CreatedAt = DateTime.UtcNow
             };
 
             await _appDbContext.Users.AddAsync(user);
             await _appDbContext.SaveChangesAsync();
 
-            // 4. Generate JWT Token
             return GenerateAuthResponse(user);
         }
 
         public async Task<AuthResponseDto?> LoginAsync(AuthLoginDto loginData)
         {
-            // 1. Find User by Email
             var user = await _appDbContext.Users
+                .Include(u => u.Role)
+                    .ThenInclude(r => r.RolePermissions)
+                        .ThenInclude(rp => rp.Permission)
                 .FirstOrDefaultAsync(u => u.Email.ToLower() == loginData.Email.Trim().ToLower());
 
             if (user == null) return null;
 
-            // 2. Verify Password using BCrypt
             bool isPasswordValid = BCrypt.Net.BCrypt.Verify(loginData.Password, user.PasswordHash);
             if (!isPasswordValid) return null;
 
-            // 3. Generate JWT Token with Claims
             return GenerateAuthResponse(user);
         }
 
-        // 🔑 The Helper that creates Claims and signs the JWT Token:
         private AuthResponseDto GenerateAuthResponse(User user)
         {
             var jwtSettings = _configuration.GetSection("JwtSettings");
@@ -81,14 +94,25 @@ namespace TEcommerceWebApi.Services
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-            // 🛡️ THESE ARE THE CLAIMS!
             var claims = new List<Claim>
             {
                 new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
                 new Claim(ClaimTypes.Email, user.Email),
                 new Claim(ClaimTypes.Name, user.FullName),
-                new Claim(ClaimTypes.Role, user.Role.ToString()) // 👈 This is what [Authorize(Roles = "...")] checks!
+                new Claim(ClaimTypes.Role, user.Role != null ? user.Role.Name : "Customer")
             };
+
+            // Add dynamic permission claims
+            if (user.Role?.RolePermissions != null)
+            {
+                foreach (var rp in user.Role.RolePermissions)
+                {
+                    if (rp.Permission != null && !string.IsNullOrWhiteSpace(rp.Permission.Code))
+                    {
+                        claims.Add(new Claim("Permission", rp.Permission.Code));
+                    }
+                }
+            }
 
             var expires = DateTime.UtcNow.AddMinutes(expiryMinutes);
 
@@ -109,7 +133,7 @@ namespace TEcommerceWebApi.Services
                 UserId = user.UserId,
                 Email = user.Email,
                 FullName = user.FullName,
-                Role = user.Role.ToString(),
+                Role = user.Role?.Name ?? "Customer",
                 ExpiresAt = expires
             };
         }
