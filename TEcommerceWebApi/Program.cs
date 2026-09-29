@@ -9,6 +9,7 @@ using TEcommerceWebApi.data;
 using TEcommerceWebApi.Interfaces;
 using TEcommerceWebApi.Middlewares;
 using TEcommerceWebApi.Services;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +35,22 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 builder.Services.AddControllers();
+
+// 1. Read Redis Connection String from appsettings.json
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
+
+// 2. Register ConnectionMultiplexer as a Singleton (for pattern scanning)
+builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConnectionString));
+
+// 3. Register Distributed Cache (for IDistributedCache Get/Set operations)
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnectionString;
+    options.InstanceName = "TEcommerce_"; // Key prefix in Redis
+});
+
+// 4. Register CacheService and CategoryService
+builder.Services.AddScoped<ICacheService, CacheService>();
 
 // 2. Register Application Services
 builder.Services.AddScoped<ICategoryService, CategoryService>();
