@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TEcommerceWebApi.DTOs;
 using TEcommerceWebApi.Interfaces;
@@ -47,6 +48,31 @@ namespace TEcommerceWebApi.Controllers
             }
 
             return Ok(ApiResponse<AuthResponseDto>.SuccessResponse(response, 200, "Login successful."));
+        }
+
+        [HttpGet("me")]
+        [Authorize] // 👈 Requires any authenticated user
+        public async Task<ActionResult<ApiResponse<object>>> GetCurrentUserProfile()
+        {
+            // Read claims directly from HttpContext.User
+            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+            var name = User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+            var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+
+            // Get list of all Permission claims in the token
+            var permissions = User.FindAll("Permission").Select(c => c.Value).ToList();
+
+            var userProfile = new
+            {
+                UserId = userId,
+                Email = email,
+                FullName = name,
+                Role = role,
+                Permissions = permissions
+            };
+
+            return Ok(ApiResponse<object>.SuccessResponse(userProfile, 200, "Current user profile retrieved."));
         }
     }
 }
