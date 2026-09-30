@@ -3,19 +3,20 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi; // ✅ Updated for .NET 10
+using Microsoft.OpenApi;
+using StackExchange.Redis;
 using TEcommerceWebApi.Controllers;
 using TEcommerceWebApi.data;
+using TEcommerceWebApi.Helpers;
 using TEcommerceWebApi.Interfaces;
 using TEcommerceWebApi.Middlewares;
 using TEcommerceWebApi.Services;
-using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 
-// 1. Configure Swagger with JWT Bearer Padlock 🔒
+// 1. Swagger Configuration with JWT + X-Tenant-Id Header
 builder.Services.AddSwaggerGen(options =>
 {
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -25,7 +26,7 @@ builder.Services.AddSwaggerGen(options =>
         Scheme = "bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Enter your JWT token directly in the box below."
+        Description = "Enter your JWT token."
     });
 
     options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
@@ -36,56 +37,34 @@ builder.Services.AddSwaggerGen(options =>
 
 builder.Services.AddControllers();
 
-// 1. Read Redis Connection String from appsettings.json
-var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
-
-// 2. Register ConnectionMultiplexer as a Singleton (for pattern scanning)
-builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConnectionString));
-
-// 3. Register Distributed Cache (for IDistributedCache Get/Set operations)
-builder.Services.AddStackExchangeRedisCache(options =>
-{
-    options.Configuration = redisConnectionString;
-    options.InstanceName = "TEcommerce_"; // Key prefix in Redis
-});
-
-// 4. Register CacheService and CategoryService
-builder.Services.AddScoped<ICacheService, CacheService>();
-
-// 2. Register Application Services
+// 2. Register Application & Tenant Services
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentTenantService, CurrentTenantService>(); // 👈 Injected Scoped per request
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddScoped<IRoleService, RoleService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IRoleService, RoleService>();
+
+// Redis
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379,abortConnect=false";
+builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConnectionString));
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnectionString;
+    options.InstanceName = "TEcommerce_";
+});
+builder.Services.AddScoped<ICacheService, CacheService>();
 
 builder.Services.AddAutoMapper(typeof(Program));
 
-// 3. Centralized API Responses
-builder.Services.Configure<ApiBehaviorOptions>(options =>
-{
-    options.InvalidModelStateResponseFactory = context =>
-    {
-        var errors = context.ModelState.Where(e => e.Value != null && e.Value.Errors.Count > 0)
-            .SelectMany(e => e.Value?.Errors != null ? e.Value.Errors.Select(x => x.ErrorMessage) : new List<string>()).ToList();
-
-        return new BadRequestObjectResult(ApiResponse<object>.ErrorResponse(errors, 400, "Validation failed."));
-    };
-});
-
-// 4. Database Context
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Add HttpContextAccessor
-builder.Services.AddHttpContextAccessor();
-
-// Register CurrentUserService
-builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
-
-// 5. 🛡️ CONFIGURE JWT AUTHENTICATION & AUTHORIZATION
+// JWT Auth Setup
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
 var secretKey = jwtSettings["SecretKey"]!;
 
@@ -109,12 +88,26 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(Permissions.CategoriesCreate, policy => policy.RequireClaim("Permission", Permissions.CategoriesCreate));
+    options.AddPolicy(Permissions.CategoriesUpdate, policy => policy.RequireClaim("Permission", Permissions.CategoriesUpdate));
+    options.AddPolicy(Permissions.CategoriesDelete, policy => policy.RequireClaim("Permission", Permissions.CategoriesDelete));
+    options.AddPolicy(Permissions.ProductsCreate, policy => policy.RequireClaim("Permission", Permissions.ProductsCreate));
+    options.AddPolicy(Permissions.ProductsUpdate, policy => policy.RequireClaim("Permission", Permissions.ProductsUpdate));
+    options.AddPolicy(Permissions.ProductsDelete, policy => policy.RequireClaim("Permission", Permissions.ProductsDelete));
+    options.AddPolicy(Permissions.AnalyticsView, policy => policy.RequireClaim("Permission", Permissions.AnalyticsView));
+    options.AddPolicy(Permissions.OrdersCreate, policy => policy.RequireClaim("Permission", Permissions.OrdersCreate));
+    options.AddPolicy(Permissions.OrdersManageStatus, policy => policy.RequireClaim("Permission", Permissions.OrdersManageStatus));
+});
 
 var app = builder.Build();
 
-// 6. Middlewares Pipeline
+// 🛡️ Middleware Pipeline Order
 app.UseMiddleware<GlobalExceptionMiddleware>();
+
+// ⚡ RESOLVE TENANT BEFORE AUTHENTICATION & CONTROLLERS
+app.UseMiddleware<TenantResolutionMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
@@ -124,7 +117,6 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// ⚠️ Authentication MUST come before Authorization
 app.UseAuthentication();
 app.UseAuthorization();
 
