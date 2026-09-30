@@ -1,0 +1,29 @@
+using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace TEcommerceWebApi.DTOs
+{
+    public class TenantCreateDto
+    {
+        [Required]
+        [StringLength(100, MinimumLength = 2)]
+        public string StoreName { get; set; } = string.Empty;
+
+        [Required]
+        [RegularExpression(@"^[a-z0-9-]+$", ErrorMessage = "Subdomain can only contain lowercase letters, numbers, and hyphens.")]
+        [StringLength(50, MinimumLength = 3)]
+        public string Subdomain { get; set; } = string.Empty; // e.g. "nike"
+
+        public string? CustomDomain { get; set; } // e.g. "www.nikestore.com"
+    }
+
+    public class TenantReadDto
+    {
+        public Guid TenantId { get; set; }
+        public string StoreName { get; set; } = string.Empty;
+        public string Subdomain { get; set; } = string.Empty;
+        public string? CustomDomain { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+}
