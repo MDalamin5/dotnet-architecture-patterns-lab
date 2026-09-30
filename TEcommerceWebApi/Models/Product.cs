@@ -1,18 +1,16 @@
+using TEcommerceWebApi.Interfaces;
 namespace TEcommerceWebApi.Models
 {
-    public class Product
+    public class Product : ITenantEntity
     {
         public Guid ProductId { get; set; }
+        public Guid TenantId { get; set; } // 👈 Added
         public string Name { get; set; } = string.Empty;
         public decimal Price { get; set; }
-        
-        // 📦 Added Inventory/Stock column:
-        public int StockQuantity { get; set; } = 0;
-
+        public int StockQuantity { get; set; }
+        public bool IsDeleted { get; set; } = false;
         public Guid CategoryId { get; set; }
         public Category? Category { get; set; }
-        public bool IsDeleted { get; set; } = false; // 👈 Add this
-
         public ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
     }
 }
