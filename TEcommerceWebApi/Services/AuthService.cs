@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
@@ -19,41 +18,51 @@ namespace TEcommerceWebApi.Services
     {
         private readonly AppDbContext _appDbContext;
         private readonly IConfiguration _configuration;
+        private readonly ICurrentTenantService _currentTenantService;
 
-        public AuthService(AppDbContext appDbContext, IConfiguration configuration)
+        public AuthService(
+            AppDbContext appDbContext, 
+            IConfiguration configuration,
+            ICurrentTenantService currentTenantService)
         {
             _appDbContext = appDbContext;
             _configuration = configuration;
+            _currentTenantService = currentTenantService;
         }
 
         public async Task<AuthResponseDto?> RegisterAsync(AuthRegisterDto registerData)
         {
-            var emailExists = await _appDbContext.Users.AnyAsync(u => u.Email.ToLower() == registerData.Email.ToLower());
-            if (emailExists) return null;
+            // 1. Ensure a Store/Tenant is resolved
+            if (!_currentTenantService.TenantId.HasValue)
+            {
+                throw new InvalidOperationException("Cannot register without an active store context. Provide a valid store subdomain or X-Tenant-Id header.");
+            }
 
-            // Fetch the Role Entity matching the Enum or default to "Customer"
+            var tenantId = _currentTenantService.TenantId.Value;
+            var emailLower = registerData.Email.Trim().ToLower();
+
+            // 2. Check if email already exists IN THIS SPECIFIC STORE!
+            var emailExistsInStore = await _appDbContext.Users
+                .AnyAsync(u => u.Email.ToLower() == emailLower && u.TenantId == tenantId);
+
+            if (emailExistsInStore) return null;
+
+            // 3. Find Role
             var roleName = registerData.Role.ToString();
             var role = await _appDbContext.Roles
                 .Include(r => r.RolePermissions)
                     .ThenInclude(rp => rp.Permission)
-                .FirstOrDefaultAsync(r => r.Name.ToLower() == roleName.ToLower());
-
-            if (role == null)
-            {
-                role = await _appDbContext.Roles
-                    .Include(r => r.RolePermissions)
-                        .ThenInclude(rp => rp.Permission)
-                    .FirstOrDefaultAsync(r => r.Name == "Customer");
-
-                if (role == null) throw new InvalidOperationException("Default 'Customer' role not found in database.");
-            }
+                .FirstOrDefaultAsync(r => r.Name.ToLower() == roleName.ToLower())
+                ?? await _appDbContext.Roles.FirstAsync(r => r.Name == "Customer");
 
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(registerData.Password);
 
+            // 4. Create User scoped to this Store
             var user = new User
             {
                 UserId = Guid.NewGuid(),
-                Email = registerData.Email.Trim().ToLower(),
+                TenantId = tenantId, // 👈 Scoped to this store!
+                Email = emailLower,
                 FullName = registerData.FullName.Trim(),
                 PasswordHash = passwordHash,
                 RoleId = role.RoleId,
@@ -69,11 +78,21 @@ namespace TEcommerceWebApi.Services
 
         public async Task<AuthResponseDto?> LoginAsync(AuthLoginDto loginData)
         {
+            // Ensure a store is identified
+            if (!_currentTenantService.TenantId.HasValue)
+            {
+                throw new InvalidOperationException("Cannot login without an active store context. Provide a valid store subdomain or X-Tenant-Id header.");
+            }
+
+            var tenantId = _currentTenantService.TenantId.Value;
+            var emailLower = loginData.Email.Trim().ToLower();
+
+            // Find user in THIS store only (EF Core query filter handles TenantId automatically)
             var user = await _appDbContext.Users
                 .Include(u => u.Role)
                     .ThenInclude(r => r.RolePermissions)
                         .ThenInclude(rp => rp.Permission)
-                .FirstOrDefaultAsync(u => u.Email.ToLower() == loginData.Email.Trim().ToLower());
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == emailLower && u.TenantId == tenantId);
 
             if (user == null) return null;
 
@@ -94,15 +113,17 @@ namespace TEcommerceWebApi.Services
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
+            // Claims
             var claims = new List<Claim>
             {
                 new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
                 new Claim(ClaimTypes.Email, user.Email),
                 new Claim(ClaimTypes.Name, user.FullName),
-                new Claim(ClaimTypes.Role, user.Role != null ? user.Role.Name : "Customer")
+                new Claim(ClaimTypes.Role, user.Role != null ? user.Role.Name : "Customer"),
+                new Claim("TenantId", user.TenantId.ToString()) // 👈 Tenant identity inside token!
             };
 
-            // Add dynamic permission claims
+            // Dynamic permissions from Role
             if (user.Role?.RolePermissions != null)
             {
                 foreach (var rp in user.Role.RolePermissions)
