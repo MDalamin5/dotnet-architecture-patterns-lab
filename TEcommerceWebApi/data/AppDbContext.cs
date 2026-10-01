@@ -37,7 +37,6 @@ namespace TEcommerceWebApi.data
             // =========================================================================
             // 🛡️ MULTI-TENANT ISOLATION + SOFT DELETES (Combined Global Query Filters)
             // =========================================================================
-            // Only returns rows that belong to the CURRENT TENANT and are NOT deleted!
             modelBuilder.Entity<Category>().HasQueryFilter(c => 
                 (!_currentTenantService.TenantId.HasValue || c.TenantId == _currentTenantService.TenantId.Value) && !c.IsDeleted);
 
@@ -58,17 +57,37 @@ namespace TEcommerceWebApi.data
                 entity.HasKey(t => t.TenantId);
                 entity.Property(t => t.StoreName).IsRequired().HasMaxLength(100);
                 entity.Property(t => t.Subdomain).IsRequired().HasMaxLength(50);
+                entity.Property(t => t.OwnerEmail).IsRequired().HasMaxLength(200);
+
                 entity.HasIndex(t => t.Subdomain).IsUnique();
                 entity.HasIndex(t => t.CustomDomain).IsUnique();
+                entity.HasIndex(t => t.OwnerEmail); // Fast merchant store lookup
             });
 
             // ==========================================
-            // Category & Product Configuration
+            // User Configuration (Composite Unique Constraint)
             // ==========================================
+            modelBuilder.Entity<User>(entity =>
+            {
+                entity.HasKey(u => u.UserId);
+                entity.Property(u => u.Email).IsRequired().HasMaxLength(200);
+                entity.Property(u => u.FullName).IsRequired().HasMaxLength(100);
+                entity.Property(u => u.PasswordHash).IsRequired();
+
+                // ⚡ KEY RULE: Email is unique per Tenant! (buyer@gmail.com can exist in Nike AND Bata)
+                entity.HasIndex(u => new { u.TenantId, u.Email }).IsUnique();
+
+                entity.HasOne(u => u.Role)
+                      .WithMany(r => r.Users)
+                      .HasForeignKey(u => u.RoleId)
+                      .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // Category & Product
             modelBuilder.Entity<Category>(entity =>
             {
                 entity.HasKey(c => c.CategoryId);
-                entity.HasIndex(c => new { c.TenantId, c.Name }); // Composite index for fast tenant search
+                entity.HasIndex(c => new { c.TenantId, c.Name });
             });
 
             modelBuilder.Entity<Product>(entity =>
@@ -84,9 +103,7 @@ namespace TEcommerceWebApi.data
                       .OnDelete(DeleteBehavior.Restrict);
             });
 
-            // ==========================================
             // Role, Permission & RolePermission
-            // ==========================================
             modelBuilder.Entity<Role>(entity =>
             {
                 entity.HasKey(r => r.RoleId);
@@ -116,28 +133,7 @@ namespace TEcommerceWebApi.data
                       .OnDelete(DeleteBehavior.Cascade);
             });
 
-            // ==========================================
-            // User Configuration
-            // ==========================================
-            modelBuilder.Entity<User>(entity =>
-            {
-                entity.HasKey(u => u.UserId);
-                entity.Property(u => u.Email).IsRequired().HasMaxLength(200);
-                entity.Property(u => u.FullName).IsRequired().HasMaxLength(100);
-                entity.Property(u => u.PasswordHash).IsRequired();
-
-                // Unique email per tenant! (Alice can exist in Store A and Store B with same email)
-                entity.HasIndex(u => new { u.TenantId, u.Email }).IsUnique();
-
-                entity.HasOne(u => u.Role)
-                      .WithMany(r => r.Users)
-                      .HasForeignKey(u => u.RoleId)
-                      .OnDelete(DeleteBehavior.Restrict);
-            });
-
-            // ==========================================
             // Order & OrderItems
-            // ==========================================
             modelBuilder.Entity<Order>(entity =>
             {
                 entity.HasKey(o => o.OrderId);
@@ -166,15 +162,13 @@ namespace TEcommerceWebApi.data
                       .OnDelete(DeleteBehavior.Restrict);
             });
 
-            // ==========================================
-            // 🌱 SEED DATA: Roles & Permissions
-            // ==========================================
+            // Seed Roles & Permissions
             var adminRoleId = Guid.Parse("10000000-0000-0000-0000-000000000001");
             var customerRoleId = Guid.Parse("20000000-0000-0000-0000-000000000002");
 
             modelBuilder.Entity<Role>().HasData(
                 new Role { RoleId = adminRoleId, Name = "Admin", Description = "Full store administrator access" },
-                new Role { RoleId = customerRoleId, Name = "Customer", Description = "Regular store shopper" }
+                new Role { RoleId = customerRoleId, Name = "Customer", Description = "Regular store customer" }
             );
 
             var p1 = Guid.Parse("30000000-0000-0000-0000-000000000001");
@@ -207,21 +201,17 @@ namespace TEcommerceWebApi.data
             );
         }
 
-        // =========================================================================
-        // ⚡ AUTOMATIC TENANT ID ASSIGNMENT ON SAVE
-        // =========================================================================
+        // Auto-assign TenantId on Save
         public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
             if (_currentTenantService.TenantId.HasValue)
             {
                 var currentTenantId = _currentTenantService.TenantId.Value;
 
-                // Automatically find every entity being inserted that implements ITenantEntity
                 foreach (var entry in ChangeTracker.Entries<ITenantEntity>())
                 {
-                    if (entry.State == EntityState.Added)
+                    if (entry.State == EntityState.Added && entry.Entity.TenantId == Guid.Empty)
                     {
-                        // Auto-assign the TenantId! You never have to set it manually in services!
                         entry.Entity.TenantId = currentTenantId;
                     }
                 }
