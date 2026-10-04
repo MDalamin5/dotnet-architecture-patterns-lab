@@ -14,6 +14,7 @@ namespace TEcommerceWebApi.DTOs
 
         [Range(0, 100000)]
         public int StockQuantity { get; set; } = 0; // 👈 Added
+        public IFormFile? Image { get; set; } // 👈 Accepts image upload file from multipart form
 
         [Required]
         public Guid CategoryId { get; set; }
