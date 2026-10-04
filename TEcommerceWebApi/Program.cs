@@ -11,10 +11,28 @@ using TEcommerceWebApi.Helpers;
 using TEcommerceWebApi.Interfaces;
 using TEcommerceWebApi.Middlewares;
 using TEcommerceWebApi.Services;
+using Amazon.S3;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
+
+// Configure MinIO / S3 Client
+var s3Settings = builder.Configuration.GetSection("S3Settings");
+var s3Config = new AmazonS3Config
+{
+    ServiceURL = s3Settings["ServiceUrl"],
+    ForcePathStyle = true // Required for MinIO!
+};
+
+builder.Services.AddSingleton<IAmazonS3>(new AmazonS3Client(
+    s3Settings["AccessKey"],
+    s3Settings["SecretKey"],
+    s3Config
+));
+
+builder.Services.AddScoped<IFileStorageService, S3FileStorageService>();
 
 // 1. Swagger Configuration with JWT + X-Tenant-Id Header
 builder.Services.AddSwaggerGen(options =>
