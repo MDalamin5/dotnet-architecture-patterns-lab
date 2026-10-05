@@ -11,39 +11,54 @@ using TEcommerceWebApi.Enums;
 
 namespace TEcommerceWebApi.Services
 {
-    public class ProductService : IProductService
-    {
-        private readonly AppDbContext _appDbContext;
+        public class ProductService : IProductService
+        {
+            private readonly AppDbContext _appDbContext;
         private readonly IMapper _mapper;
+        private readonly IFileStorageService _fileStorageService; // 👈 Inject
+        private readonly ICurrentTenantService _currentTenantService; // 👈 Inject
 
-        // Injected AppDbContext and AutoMapper
-        public ProductService(AppDbContext appDbContext, IMapper mapper)
+        public ProductService(
+            AppDbContext appDbContext, 
+            IMapper mapper, 
+            IFileStorageService fileStorageService,
+            ICurrentTenantService currentTenantService)
         {
             _appDbContext = appDbContext;
             _mapper = mapper;
+            _fileStorageService = fileStorageService;
+            _currentTenantService = currentTenantService;
         }
 
         public async Task<ProductReadDto?> CreateProduct(ProductCreateDto productData)
         {
-            // 1. Verify category exists in the database
             var category = await _appDbContext.Categories.FindAsync(productData.CategoryId);
-            if (category == null)
+            if (category == null) return null;
+
+            string? uploadedImageUrl = null;
+
+            // Upload image to MinIO if provided
+            if (productData.Image != null)
             {
-                return null;
+                var tenantFolder = $"tenants/{_currentTenantService.TenantId ?? Guid.Empty}/products";
+                uploadedImageUrl = await _fileStorageService.UploadImageAsync(productData.Image, tenantFolder);
             }
 
-            // 2. Map DTO to Entity using AutoMapper
-            var newProduct = _mapper.Map<Product>(productData);
-            newProduct.ProductId = Guid.NewGuid();
+            var newProduct = new Product
+            {
+                ProductId = Guid.NewGuid(),
+                Name = productData.Name,
+                Price = productData.Price,
+                StockQuantity = productData.StockQuantity,
+                CategoryId = productData.CategoryId,
+                ImageUrl = uploadedImageUrl // 👈 Saved URL
+            };
 
-            // 3. Save to database
             await _appDbContext.Products.AddAsync(newProduct);
             await _appDbContext.SaveChangesAsync();
 
-            // 4. Map Entity to ReadDto and attach the category name
             var responseDto = _mapper.Map<ProductReadDto>(newProduct);
             responseDto.CategoryName = category.Name;
-
             return responseDto;
         }
 
