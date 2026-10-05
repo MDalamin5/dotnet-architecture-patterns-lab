@@ -10,6 +10,7 @@ using TEcommerceWebApi.Models;
 using TEcommerceWebApi.Services;
 using TEcommerceWebApi.Interfaces;
 using TEcommerceWebApi.Helpers;
+using Microsoft.AspNetCore.Authorization;
 
 namespace TEcommerceWebApi.Controllers
 {
@@ -26,10 +27,11 @@ namespace TEcommerceWebApi.Controllers
         }
 
         [HttpPost]
-        public async Task<ActionResult<ApiResponse<ProductReadDto>>> CreateProduct([FromBody] ProductCreateDto productData)
+        [Authorize(Policy = Permissions.ProductsCreate)]
+        [Consumes("multipart/form-data")] // 👈 Tells Swagger to show the file picker!
+        public async Task<ActionResult<ApiResponse<ProductReadDto>>> CreateProduct([FromForm] ProductCreateDto productData)
         {
             var createdProduct = await _productService.CreateProduct(productData);
-
             if (createdProduct == null)
             {
                 return NotFound(ApiResponse<object>.ErrorResponse(
