@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
@@ -30,38 +31,74 @@ namespace TEcommerceWebApi.Services
             _currentTenantService = currentTenantService;
         }
 
+        // =========================================================================
+        // 1. REGISTER: Auto-detects store or uses provided tenant
+        // =========================================================================
         public async Task<AuthResponseDto?> RegisterAsync(AuthRegisterDto registerData)
         {
-            // 1. Ensure a Store/Tenant is resolved
-            if (!_currentTenantService.TenantId.HasValue)
+            Guid tenantId;
+
+            // Strategy 1: Tenant resolved from Header (X-Tenant-Id) or Subdomain
+            if (_currentTenantService.TenantId.HasValue)
             {
-                throw new InvalidOperationException("Cannot register without an active store context. Provide a valid store subdomain or X-Tenant-Id header.");
+                tenantId = _currentTenantService.TenantId.Value;
+            }
+            // Strategy 2: Tenant passed inside JSON body
+            else if (registerData.TenantId.HasValue)
+            {
+                tenantId = registerData.TenantId.Value;
+            }
+            // Strategy 3: Development fallback on localhost -> auto-pick first store from DB
+            else
+            {
+                var defaultTenant = await _appDbContext.Tenants.FirstOrDefaultAsync();
+                if (defaultTenant == null)
+                {
+                    throw new InvalidOperationException("No stores exist yet. Please create a store first via POST /api/v2/tenants.");
+                }
+                tenantId = defaultTenant.TenantId;
             }
 
-            var tenantId = _currentTenantService.TenantId.Value;
+            // Verify the store exists
+            var tenantExists = await _appDbContext.Tenants.AnyAsync(t => t.TenantId == tenantId);
+            if (!tenantExists)
+            {
+                throw new KeyNotFoundException($"Store with ID '{tenantId}' was not found.");
+            }
+
             var emailLower = registerData.Email.Trim().ToLower();
 
-            // 2. Check if email already exists IN THIS SPECIFIC STORE!
+            // Check if email already exists IN THIS SPECIFIC STORE
             var emailExistsInStore = await _appDbContext.Users
+                .IgnoreQueryFilters()
                 .AnyAsync(u => u.Email.ToLower() == emailLower && u.TenantId == tenantId);
 
             if (emailExistsInStore) return null;
 
-            // 3. Find Role
+            // Find matching Role (Admin or Customer)
             var roleName = registerData.Role.ToString();
             var role = await _appDbContext.Roles
                 .Include(r => r.RolePermissions)
                     .ThenInclude(rp => rp.Permission)
-                .FirstOrDefaultAsync(r => r.Name.ToLower() == roleName.ToLower())
-                ?? await _appDbContext.Roles.FirstAsync(r => r.Name == "Customer");
+                .FirstOrDefaultAsync(r => r.Name.ToLower() == roleName.ToLower());
+
+            if (role == null)
+            {
+                role = await _appDbContext.Roles
+                    .Include(r => r.RolePermissions)
+                        .ThenInclude(rp => rp.Permission)
+                    .FirstOrDefaultAsync(r => r.Name == "Customer");
+
+                if (role == null) throw new InvalidOperationException("Default role not found in database.");
+            }
 
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(registerData.Password);
 
-            // 4. Create User scoped to this Store
+            // Create User linked to this specific store
             var user = new User
             {
                 UserId = Guid.NewGuid(),
-                TenantId = tenantId, // 👈 Scoped to this store!
+                TenantId = tenantId,
                 Email = emailLower,
                 FullName = registerData.FullName.Trim(),
                 PasswordHash = passwordHash,
@@ -76,32 +113,54 @@ namespace TEcommerceWebApi.Services
             return GenerateAuthResponse(user);
         }
 
+        // =========================================================================
+        // 2. LOGIN: Works WITH or WITHOUT tenant header
+        // =========================================================================
         public async Task<AuthResponseDto?> LoginAsync(AuthLoginDto loginData)
         {
-            // Ensure a store is identified
-            if (!_currentTenantService.TenantId.HasValue)
-            {
-                throw new InvalidOperationException("Cannot login without an active store context. Provide a valid store subdomain or X-Tenant-Id header.");
-            }
-
-            var tenantId = _currentTenantService.TenantId.Value;
             var emailLower = loginData.Email.Trim().ToLower();
 
-            // Find user in THIS store only (EF Core query filter handles TenantId automatically)
-            var user = await _appDbContext.Users
+            // Case A: Store is known (via header or subdomain)
+            if (_currentTenantService.TenantId.HasValue)
+            {
+                var tenantId = _currentTenantService.TenantId.Value;
+
+                var user = await _appDbContext.Users
+                    .Include(u => u.Role)
+                        .ThenInclude(r => r.RolePermissions)
+                            .ThenInclude(rp => rp.Permission)
+                    .FirstOrDefaultAsync(u => u.Email.ToLower() == emailLower && u.TenantId == tenantId);
+
+                if (user == null) return null;
+
+                bool isPasswordValid = BCrypt.Net.BCrypt.Verify(loginData.Password, user.PasswordHash);
+                if (!isPasswordValid) return null;
+
+                return GenerateAuthResponse(user);
+            }
+
+            // Case B: No store header passed (localhost testing / merchant global login)
+            var candidateUsers = await _appDbContext.Users
+                .IgnoreQueryFilters()
                 .Include(u => u.Role)
                     .ThenInclude(r => r.RolePermissions)
                         .ThenInclude(rp => rp.Permission)
-                .FirstOrDefaultAsync(u => u.Email.ToLower() == emailLower && u.TenantId == tenantId);
+                .Where(u => u.Email.ToLower() == emailLower)
+                .ToListAsync();
 
-            if (user == null) return null;
+            if (candidateUsers.Count == 0) return null;
 
-            bool isPasswordValid = BCrypt.Net.BCrypt.Verify(loginData.Password, user.PasswordHash);
-            if (!isPasswordValid) return null;
+            var matchedUser = candidateUsers.FirstOrDefault(u => 
+                BCrypt.Net.BCrypt.Verify(loginData.Password, u.PasswordHash));
 
-            return GenerateAuthResponse(user);
+            if (matchedUser == null) return null;
+
+            return GenerateAuthResponse(matchedUser);
         }
 
+        // =========================================================================
+        // 3. GENERATE TOKEN WITH CLAIMS
+        // =========================================================================
         private AuthResponseDto GenerateAuthResponse(User user)
         {
             var jwtSettings = _configuration.GetSection("JwtSettings");
@@ -113,17 +172,15 @@ namespace TEcommerceWebApi.Services
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-            // Claims
             var claims = new List<Claim>
             {
                 new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
                 new Claim(ClaimTypes.Email, user.Email),
                 new Claim(ClaimTypes.Name, user.FullName),
                 new Claim(ClaimTypes.Role, user.Role != null ? user.Role.Name : "Customer"),
-                new Claim("TenantId", user.TenantId.ToString()) // 👈 Tenant identity inside token!
+                new Claim("TenantId", user.TenantId.ToString())
             };
 
-            // Dynamic permissions from Role
             if (user.Role?.RolePermissions != null)
             {
                 foreach (var rp in user.Role.RolePermissions)

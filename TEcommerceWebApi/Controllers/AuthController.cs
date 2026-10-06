@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Security.Claims;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,22 +20,35 @@ namespace TEcommerceWebApi.Controllers
             _authService = authService;
         }
 
+        // Register Account
         [HttpPost("register")]
         public async Task<ActionResult<ApiResponse<AuthResponseDto>>> Register([FromBody] AuthRegisterDto registerData)
         {
-            var response = await _authService.RegisterAsync(registerData);
-            if (response == null)
+            try
             {
-                return Conflict(ApiResponse<object>.ErrorResponse(
-                    new List<string> { $"User with email '{registerData.Email}' already exists." },
-                    409,
-                    "Registration Failed"
-                ));
-            }
+                var response = await _authService.RegisterAsync(registerData);
+                if (response == null)
+                {
+                    return Conflict(ApiResponse<object>.ErrorResponse(
+                        new List<string> { $"User with email '{registerData.Email}' already exists in this store." },
+                        409,
+                        "Registration Failed"
+                    ));
+                }
 
-            return StatusCode(201, ApiResponse<AuthResponseDto>.SuccessResponse(response, 201, "User registered successfully."));
+                return StatusCode(201, ApiResponse<AuthResponseDto>.SuccessResponse(response, 201, "User registered successfully."));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<object>.ErrorResponse(new List<string> { ex.Message }, 400, "Store Required"));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(ApiResponse<object>.ErrorResponse(new List<string> { ex.Message }, 404, "Store Not Found"));
+            }
         }
 
+        // Login Account
         [HttpPost("login")]
         public async Task<ActionResult<ApiResponse<AuthResponseDto>>> Login([FromBody] AuthLoginDto loginData)
         {
@@ -50,22 +65,22 @@ namespace TEcommerceWebApi.Controllers
             return Ok(ApiResponse<AuthResponseDto>.SuccessResponse(response, 200, "Login successful."));
         }
 
+        // View Current User Profile & Active Permissions
         [HttpGet("me")]
-        [Authorize] // 👈 Requires any authenticated user
-        public async Task<ActionResult<ApiResponse<object>>> GetCurrentUserProfile()
+        [Authorize]
+        public ActionResult<ApiResponse<object>> GetCurrentUserProfile()
         {
-            // Read claims directly from HttpContext.User
-            var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
-            var name = User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
-            var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
-
-            // Get list of all Permission claims in the token
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var email = User.FindFirstValue(ClaimTypes.Email);
+            var name = User.FindFirstValue(ClaimTypes.Name);
+            var role = User.FindFirstValue(ClaimTypes.Role);
+            var tenantId = User.FindFirstValue("TenantId");
             var permissions = User.FindAll("Permission").Select(c => c.Value).ToList();
 
             var userProfile = new
             {
                 UserId = userId,
+                TenantId = tenantId,
                 Email = email,
                 FullName = name,
                 Role = role,

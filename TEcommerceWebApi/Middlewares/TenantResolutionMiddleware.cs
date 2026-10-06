@@ -6,7 +6,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TEcommerceWebApi.data;
 using TEcommerceWebApi.Interfaces;
-using TEcommerceWebApi.Models;
 
 namespace TEcommerceWebApi.Middlewares
 {
@@ -21,8 +20,9 @@ namespace TEcommerceWebApi.Middlewares
 
         public async Task InvokeAsync(HttpContext context, ICurrentTenantService currentTenantService, IServiceProvider serviceProvider)
         {
-            // Path exclusion: Skip tenant resolution for tenant creation endpoint, swagger, or root health checks
             var path = context.Request.Path.Value?.ToLower() ?? string.Empty;
+
+            // Skip resolution on public platform routes
             if (path.StartsWith("/swagger") || path == "/api/v2/tenants" || path == "/")
             {
                 await _next(context);
@@ -31,13 +31,13 @@ namespace TEcommerceWebApi.Middlewares
 
             Guid? resolvedTenantId = null;
 
-            // Strategy 1: Check HTTP Header 'X-Tenant-Id' (Great for Swagger & Mobile apps)
+            // Strategy 1: Header 'X-Tenant-Id'
             if (context.Request.Headers.TryGetValue("X-Tenant-Id", out var tenantHeader) && 
                 Guid.TryParse(tenantHeader, out var headerGuid))
             {
                 resolvedTenantId = headerGuid;
             }
-            // Strategy 2: Check JWT Claim 'TenantId' (For logged-in users)
+            // Strategy 2: JWT Claim 'TenantId' (for authenticated requests)
             else if (context.User.Identity?.IsAuthenticated == true)
             {
                 var claimTenantId = context.User.Claims.FirstOrDefault(c => c.Type == "TenantId")?.Value;
@@ -46,21 +46,25 @@ namespace TEcommerceWebApi.Middlewares
                     resolvedTenantId = claimGuid;
                 }
             }
-            // Strategy 3: Check Host Header / Subdomain (e.g. nike.byvstore.com or www.nikestore.com)
+            // Strategy 3: Subdomain or Custom Domain from Host header
             else
             {
                 var host = context.Request.Host.Host.ToLower();
-                using var scope = serviceProvider.CreateScope();
-                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                // Check for custom domain match or subdomain match
-                var tenant = await dbContext.Tenants
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(t => t.CustomDomain == host || t.Subdomain == host.Split('.')[0]);
-
-                if (tenant != null)
+                // Only search DB if host is not plain localhost or an IP
+                if (host != "localhost" && !host.StartsWith("127.0.0.1"))
                 {
-                    resolvedTenantId = tenant.TenantId;
+                    using var scope = serviceProvider.CreateScope();
+                    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                    var tenant = await dbContext.Tenants
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(t => t.CustomDomain == host || t.Subdomain == host.Split('.')[0]);
+
+                    if (tenant != null)
+                    {
+                        resolvedTenantId = tenant.TenantId;
+                    }
                 }
             }
 
