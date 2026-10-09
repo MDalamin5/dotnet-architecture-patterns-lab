@@ -132,21 +132,17 @@ builder.Services.AddAuthorization(options =>
 
 var app = builder.Build();
 
-// 🛡️ Middleware Pipeline Order
 app.UseMiddleware<GlobalExceptionMiddleware>();
-
-// ⚡ RESOLVE TENANT BEFORE AUTHENTICATION & CONTROLLERS
-app.UseMiddleware<TenantResolutionMiddleware>();
-
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
 
 app.UseHttpsRedirection();
 
+// 1. Authenticate user from JWT token first!
 app.UseAuthentication();
+
+// 2. NOW resolve Tenant (it can read the 'TenantId' claim from the decoded token!)
+app.UseMiddleware<TenantResolutionMiddleware>();
+
+// 3. Check authorization policies
 app.UseAuthorization();
 
 app.MapControllers();
