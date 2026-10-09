@@ -3,13 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using TEcommerceWebApi.Controllers;
 using TEcommerceWebApi.data;
 using TEcommerceWebApi.DTOs;
 using TEcommerceWebApi.Enums;
+using TEcommerceWebApi.Events;
 using TEcommerceWebApi.Helpers;
 using TEcommerceWebApi.Interfaces;
 using TEcommerceWebApi.Models;
-using TEcommerceWebApi.Controllers;
 
 namespace TEcommerceWebApi.Services
 {
@@ -17,14 +18,19 @@ namespace TEcommerceWebApi.Services
     {
         private readonly AppDbContext _appDbContext;
         private readonly ICurrentUserService _currentUserService;
+        private readonly IBackgroundTaskQueue _backgroundQueue; // 👈 Injected Background Queue
 
-        public OrderService(AppDbContext appDbContext, ICurrentUserService currentUserService)
+        public OrderService(
+            AppDbContext appDbContext, 
+            ICurrentUserService currentUserService,
+            IBackgroundTaskQueue backgroundQueue)
         {
             _appDbContext = appDbContext;
             _currentUserService = currentUserService;
+            _backgroundQueue = backgroundQueue;
         }
 
-        // 1. Checkout (Transactional, Stock Deducting, Secure Current User)
+        // 1. Checkout (Transactional, Stock Deducting, Secure Current User & Background Queue)
         public async Task<OrderReadDto> CheckoutAsync(OrderCheckoutDto checkoutData)
         {
             // Read UserId directly from JWT token
@@ -96,6 +102,7 @@ namespace TEcommerceWebApi.Services
                 {
                     OrderId = newOrderId,
                     UserId = user.UserId,
+                    TenantId = user.TenantId,
                     OrderDate = DateTime.UtcNow,
                     TotalAmount = totalAmount,
                     Status = OrderStatus.Pending,
@@ -107,6 +114,20 @@ namespace TEcommerceWebApi.Services
 
                 // Commit transaction to database
                 await transaction.CommitAsync();
+
+                // ⚡ ASYNCHRONOUS EVENT DISPATCH:
+                // Push event into memory queue in ~1ms so the client receives a fast 201 response.
+                // The email/invoice generation is handled in the background by OrderNotificationWorker!
+                await _backgroundQueue.QueueOrderPlacedEventAsync(new OrderPlacedEvent
+                {
+                    OrderId = newOrderId,
+                    TenantId = order.TenantId,
+                    CustomerEmail = user.Email,
+                    CustomerName = user.FullName,
+                    TotalAmount = totalAmount,
+                    TotalItems = orderItems.Count,
+                    OrderDate = order.OrderDate
+                });
 
                 return await GetOrderByIdAsync(newOrderId) 
                     ?? throw new Exception("Error loading created order.");

@@ -12,6 +12,8 @@ using TEcommerceWebApi.Interfaces;
 using TEcommerceWebApi.Middlewares;
 using TEcommerceWebApi.Services;
 using Amazon.S3;
+using TEcommerceWebApi.BackgroundWorkers;
+
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -66,6 +68,15 @@ builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IRoleService, RoleService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+
+// Register Background Queue as Singleton (must hold state across the app)
+builder.Services.AddSingleton<IBackgroundTaskQueue, BackgroundTaskQueue>();
+
+// Register Hosted Background Service (starts automatically on application boot)
+builder.Services.AddHostedService<OrderNotificationWorker>();
+
+// Register Email Service
+builder.Services.AddScoped<IEmailService, EmailService>();
 
 // Redis
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379,abortConnect=false";
