@@ -28,3 +28,19 @@ export const useTenantStore = create<TenantState>()(
     { name: "byv-tenant", skipHydration: true },
   ),
 );
+
+/**
+ * The store a *customer* is currently browsing (/store/<tenant>). Kept apart from `useTenantStore`
+ * so visiting a storefront never changes which store the merchant is managing.
+ */
+interface StorefrontTenantState {
+  tenant: ActiveTenant | null;
+  setTenant: (tenant: ActiveTenant | null) => void;
+}
+
+export const useStorefrontTenantStore = create<StorefrontTenantState>()(
+  persist(
+    (set) => ({ tenant: null, setTenant: (tenant) => set({ tenant }) }),
+    { name: "byv-storefront-tenant", skipHydration: true },
+  ),
+);

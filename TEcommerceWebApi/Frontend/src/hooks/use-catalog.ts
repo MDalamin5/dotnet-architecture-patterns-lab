@@ -1,9 +1,17 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { categoriesApi, productsApi } from "@/lib/api";
 import type { CategoryCreateDto, CategoryUpdateDto, ProductCreateInput, ProductUpdateDto, QueryParameters } from "@/types/api";
-import { useTenantStore } from "@/stores/tenant";
+import { usePathname } from "next/navigation";
+import { isAdminPath } from "@/stores/session";
+import { useStorefrontTenantStore, useTenantStore } from "@/stores/tenant";
 
-export const useTenantId = () => useTenantStore((s) => s.activeTenant?.tenantId ?? null);
+/** The tenant the current portal is working against (merchant: active store; customer: browsed store). */
+export function useTenantId() {
+  const admin = isAdminPath(usePathname());
+  const merchantTenant = useTenantStore((s) => s.activeTenant?.tenantId ?? null);
+  const storefrontTenant = useStorefrontTenantStore((s) => s.tenant?.tenantId ?? null);
+  return admin ? merchantTenant : storefrontTenant;
+}
 
 export function useProducts(params: QueryParameters) {
   const tenantId = useTenantId();

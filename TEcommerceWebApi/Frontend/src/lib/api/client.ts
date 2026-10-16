@@ -2,8 +2,8 @@ import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { toast } from "sonner";
 import { env } from "@/lib/env";
 import type { ApiResponse } from "@/types/api";
-import { useAuthStore } from "@/stores/auth";
 import { useTenantStore } from "@/stores/tenant";
+import { currentSession } from "@/stores/session";
 
 declare module "axios" {
   interface AxiosRequestConfig {
@@ -24,10 +24,10 @@ const isApiEnvelope = (body: unknown): body is ApiResponse<unknown> =>
 
 // ---- Request: Authorization + X-Tenant-Id ------------------------------------------------
 http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = useAuthStore.getState().token;
-  if (token) config.headers.set("Authorization", `Bearer ${token}`);
-
-  const tenantId = useTenantStore.getState().activeTenant?.tenantId;
+  // Merchant (/admin) and customer (/store) sessions are separate; pick by where the browser is.
+  const { auth, tenantId } = currentSession();
+  // An explicit Authorization header (e.g. /auth/me right after login) wins over the stored session.
+  if (auth.token && !config.headers.has("Authorization")) config.headers.set("Authorization", `Bearer ${auth.token}`);
   if (tenantId && !config.skipTenant) config.headers.set("X-Tenant-Id", tenantId);
 
   // Let the browser set the multipart boundary itself.
@@ -47,11 +47,14 @@ http.interceptors.response.use(
     const status = error.response?.status;
 
     if (status === 401 && !error.config?.skipAuthRedirect && typeof window !== "undefined") {
-      const hadSession = !!useAuthStore.getState().token;
-      useAuthStore.getState().logout();
+      const { portal, auth } = currentSession();
+      const hadSession = !!auth.token;
+      auth.logout();
 
-      if (window.location.pathname.startsWith("/admin")) {
+      if (portal === "admin") {
         useTenantStore.getState().reset();
+        // Hard navigation on purpose: outside React, and it drops all in-memory query state.
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
         if (!window.location.pathname.startsWith("/admin/login")) window.location.assign("/admin/login");
       } else if (hadSession) {
         toast.error("Your session has expired. Please sign in again.");

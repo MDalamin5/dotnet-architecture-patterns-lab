@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
 import { create } from "zustand";
-import { useAuthStore } from "./auth";
+import { useAuthStore, useMerchantAuthStore } from "./auth";
 import { useCartStore } from "./cart";
-import { useTenantStore } from "./tenant";
+import { useStorefrontTenantStore, useTenantStore } from "./tenant";
 
 /**
  * Persisted stores use `skipHydration`, so the first client render matches the server HTML.
@@ -18,6 +17,8 @@ export async function rehydrateStores() {
   started = true;
   await Promise.all([
     useAuthStore.persist.rehydrate(),
+    useMerchantAuthStore.persist.rehydrate(),
+    useStorefrontTenantStore.persist.rehydrate(),
     useTenantStore.persist.rehydrate(),
     useCartStore.persist.rehydrate(),
   ]);
@@ -25,10 +26,3 @@ export async function rehydrateStores() {
 }
 
 export const useHydrated = () => useHydrationFlag((s) => s.hydrated);
-
-/** Re-render-safe "have we mounted on the client" flag for non-store client-only values. */
-export function useMounted() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  return mounted;
-}

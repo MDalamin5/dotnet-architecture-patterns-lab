@@ -18,22 +18,33 @@ interface AuthState {
   hasPermission: (permissionCode: string) => boolean;
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set, get) => ({
-      token: null,
-      user: null,
-      setAuth: (token, user) => set({ token, user }),
-      logout: () => set({ token: null, user: null }),
-      hasPermission: (permissionCode) => get().user?.permissions.includes(permissionCode) ?? false,
-    }),
-    {
-      name: "byv-auth",
-      partialize: (state) => ({ token: state.token, user: state.user }),
-      // Hydrated manually after mount (see stores/hydration.ts) so SSR and the first client render match.
-      skipHydration: true,
-    },
-  ),
-);
+const createAuthStore = (storageKey: string) =>
+  create<AuthState>()(
+    persist(
+      (set, get) => ({
+        token: null,
+        user: null,
+        setAuth: (token, user) => set({ token, user }),
+        logout: () => set({ token: null, user: null }),
+        hasPermission: (permissionCode) => get().user?.permissions.includes(permissionCode) ?? false,
+      }),
+      {
+        name: storageKey,
+        partialize: (state) => ({ token: state.token, user: state.user }),
+        // Hydrated manually after mount (see stores/hydration.ts) so SSR and the first client render match.
+        skipHydration: true,
+      },
+    ),
+  );
+
+/**
+ * Two independent sessions share one origin on localhost, so they get separate storage slots:
+ * a merchant signed in to /admin and a customer signed in to /store/<tenant> never overwrite each other.
+ * (In production the portals are different origins anyway.)
+ */
+/** Storefront customer session. */
+export const useAuthStore = createAuthStore("byv-auth");
+/** Merchant (store owner) session used by /admin. */
+export const useMerchantAuthStore = createAuthStore("byv-merchant-auth");
 
 export const isMerchant = (user: AuthUser | null) => user?.role === "Admin";

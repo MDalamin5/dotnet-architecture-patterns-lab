@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { analyticsApi, rolesApi, tenantsApi } from "@/lib/api";
 import type { RoleCreateDto, TenantCreateDto, UpdateRolePermissionsDto } from "@/types/api";
-import { useAuthStore } from "@/stores/auth";
+import { useMerchantAuthStore } from "@/stores/auth";
 import { useTenantId } from "./use-catalog";
 
 export function useMyStores() {
-  const userId = useAuthStore((s) => s.user?.userId);
+  const userId = useMerchantAuthStore((s) => s.user?.userId);
   return useQuery({
     queryKey: ["tenants", "mine", userId],
     queryFn: () => tenantsApi.myStores(),

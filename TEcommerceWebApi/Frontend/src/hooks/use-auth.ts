@@ -1,18 +1,22 @@
 import { useMutation } from "@tanstack/react-query";
 import { authApi, buildAuthUser } from "@/lib/api";
 import type { AuthLoginDto, AuthRegisterDto } from "@/types/api";
-import { useAuthStore } from "@/stores/auth";
+import { useAuthStore, useMerchantAuthStore } from "@/stores/auth";
 
 /**
- * Login, then enrich with /auth/me (permissions). The token must be in the store before /auth/me
- * so the request interceptor attaches it — but we pass it explicitly and only commit on success.
+ * Login, then enrich with /auth/me (permissions). /auth/me gets the fresh token explicitly, and the
+ * session is only committed once everything succeeded.
  */
-export function useLogin({ tenant, merchantOnly = false }: { tenant: boolean; merchantOnly?: boolean }) {
-  const setAuth = useAuthStore((s) => s.setAuth);
+export function useLogin({ portal }: { portal: "admin" | "store" }) {
+  const merchant = portal === "admin";
+  const setCustomerAuth = useAuthStore((s) => s.setAuth);
+  const setMerchantAuth = useMerchantAuthStore((s) => s.setAuth);
+  const setAuth = merchant ? setMerchantAuth : setCustomerAuth;
   return useMutation({
     mutationFn: async (dto: AuthLoginDto) => {
-      const auth = await authApi.login(dto, { tenant });
-      if (merchantOnly && auth.role !== "Admin") {
+      // Merchants log in "globally" (no X-Tenant-Id); customers log in to the storefront's tenant.
+      const auth = await authApi.login(dto, { tenant: !merchant });
+      if (merchant && auth.role !== "Admin") {
         throw new Error("This account is not a store owner. Use the storefront to sign in as a customer.");
       }
       const user = await buildAuthUser(auth);
