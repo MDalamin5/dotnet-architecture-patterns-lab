@@ -55,6 +55,22 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+// 1. Define CORS Policy
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.SetIsOriginAllowed(origin => 
+              // Allow localhost:3000, subdomains, and production domains
+              new Uri(origin).Host == "localhost" || 
+              new Uri(origin).Host.EndsWith("byvstore.com") ||
+              new Uri(origin).Host.EndsWith("lvh.me")) // for local subdomain testing!
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
 builder.Services.AddControllers();
 
 // 2. Register Application & Tenant Services
@@ -135,6 +151,9 @@ var app = builder.Build();
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
 app.UseHttpsRedirection();
+
+// ⚡ Enable CORS here:
+app.UseCors("AllowFrontend");
 
 // 1. Authenticate user from JWT token first!
 app.UseAuthentication();
