@@ -120,6 +120,8 @@ namespace TEcommerceWebApi.Services
                 ProductId = p.ProductId,
                 Name = p.Name,
                 Price = p.Price,
+                ImageUrl = p.ImageUrl,
+                StockQuantity = p.StockQuantity,
                 CategoryId = p.CategoryId,
                 CategoryName = p.Category != null ? p.Category.Name : string.Empty
             }).ToListAsync();
