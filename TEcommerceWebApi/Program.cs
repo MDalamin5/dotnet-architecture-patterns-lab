@@ -164,5 +164,21 @@ app.UseMiddleware<TenantResolutionMiddleware>();
 // 3. Check authorization policies
 app.UseAuthorization();
 
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    try
+    {
+        // Applies any pending migrations and seeds initial data automatically!
+        dbContext.Database.Migrate();
+    }
+    catch (Exception ex)
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An error occurred while applying database migrations.");
+    }
+}
+
+
 app.MapControllers();
 app.Run();
