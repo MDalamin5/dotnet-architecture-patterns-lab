@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const API_PROXY_TARGET = process.env.API_PROXY_TARGET ?? "http://localhost:5131";
 
 const nextConfig: NextConfig = {
+  output: 'standalone', // for the docker
   cacheComponents: false,
   partialPrefetching: false,
   turbopack: {
@@ -17,6 +18,7 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [{ source: "/api/v2/:path*", destination: `${API_PROXY_TARGET}/api/v2/:path*` }];
   },
+  
 };
 
 export default nextConfig;
